@@ -11,6 +11,9 @@
     const MAX_RETRIES = 15;
     let worldReceived = false;
     let gameStarted = false;
+    let hostReady = false;
+    let guestReady = false;
+    let gameInitialized = false;
 
     const loginScreen = document.getElementById('login-screen');
     const lobbyScreen = document.getElementById('lobby-screen');
@@ -29,18 +32,112 @@
     const notification = document.getElementById('notification');
     const savedName = localStorage.getItem('codegarden_username');
 
+    // ========== LOBBY DE PRONTIDÃO (CRIADO VIA JS) ==========
+    let readyLobby = null;
+    function createReadyLobby() {
+        if (readyLobby) return;
+        readyLobby = document.createElement('div');
+        readyLobby.id = 'ready-lobby';
+        readyLobby.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(20,30,20,0.95);border:3px solid #ffd700;border-radius:20px;padding:30px;z-index:400;display:none;text-align:center;min-width:350px;box-shadow:0 0 60px rgba(0,0,0,0.8);';
+        readyLobby.innerHTML = `
+            <h3 style="color:#ffd700;font-family:'Press Start 2P',cursive;font-size:14px;margin-bottom:20px;">🎮 LOBBY</h3>
+            <div id="ready-players" style="color:#fff;font-family:'Press Start 2P',cursive;font-size:9px;margin-bottom:15px;"></div>
+            <div id="ready-status" style="color:#ffa500;font-family:'Press Start 2P',cursive;font-size:8px;margin-bottom:20px;">Aguardando...</div>
+            <button id="ready-btn" class="btn" style="font-size:12px;padding:14px 30px;background:#7cfc00;border-bottom-color:#3a7a00;">✅ PRONTO</button>
+            <button id="ready-cancel" class="btn close-btn" style="margin-top:10px;display:none;">❌ CANCELAR</button>
+        `;
+        document.body.appendChild(readyLobby);
+        
+        document.getElementById('ready-btn').addEventListener('click', () => {
+            if (isHost) {
+                hostReady = true;
+                document.getElementById('ready-btn').textContent = '✅ AGUARDANDO...';
+                document.getElementById('ready-btn').style.background = '#888';
+                document.getElementById('ready-btn').style.borderBottomColor = '#555';
+                document.getElementById('ready-btn').disabled = true;
+                document.getElementById('ready-status').textContent = 'Você está pronto! Aguardando convidado...';
+                document.getElementById('ready-players').innerHTML = '🧑‍🌾 <span style="color:#7cfc00;">Você</span> ✅<br>👤 <span style="color:#ffa500;">Convidado</span> ⌛';
+            } else {
+                guestReady = true;
+                document.getElementById('ready-btn').textContent = '✅ AGUARDANDO...';
+                document.getElementById('ready-btn').style.background = '#888';
+                document.getElementById('ready-btn').style.borderBottomColor = '#555';
+                document.getElementById('ready-btn').disabled = true;
+                document.getElementById('ready-status').textContent = 'Você está pronto! Aguardando host...';
+                document.getElementById('ready-players').innerHTML = '🧑‍🌾 <span style="color:#7cfc00;">Host</span> ⌛<br>👤 <span style="color:#ffa500;">Você</span> ✅';
+                // Avisa o host que está pronto
+                if (conn && conn.open) {
+                    conn.send({ type: 'ready', from: playerName });
+                }
+            }
+            checkBothReady();
+        });
+    }
+    
+    function showReadyLobby() {
+        createReadyLobby();
+        readyLobby.style.display = 'block';
+        document.getElementById('ready-btn').textContent = '✅ PRONTO';
+        document.getElementById('ready-btn').style.background = '#7cfc00';
+        document.getElementById('ready-btn').style.borderBottomColor = '#3a7a00';
+        document.getElementById('ready-btn').disabled = false;
+        document.getElementById('ready-cancel').style.display = 'none';
+        if (isHost) {
+            document.getElementById('ready-status').textContent = 'Aguardando convidado entrar...';
+            document.getElementById('ready-players').innerHTML = '🧑‍🌾 <span style="color:#7cfc00;">Você (Host)</span><br>👤 <span style="color:#888;">Convidado (não entrou)</span>';
+        } else {
+            document.getElementById('ready-status').textContent = 'Conectado! Clique em PRONTO';
+            document.getElementById('ready-players').innerHTML = '🧑‍🌾 <span style="color:#7cfc00;">Host</span><br>👤 <span style="color:#ffa500;">Você (Convidado)</span>';
+        }
+    }
+    
+    function hideReadyLobby() {
+        if (readyLobby) readyLobby.style.display = 'none';
+    }
+    
+    function updateReadyLobbyForGuestJoin() {
+        if (readyLobby && readyLobby.style.display === 'block' && isHost) {
+            document.getElementById('ready-status').textContent = 'Convidado entrou! Clique em PRONTO quando estiver pronto';
+            document.getElementById('ready-players').innerHTML = '🧑‍🌾 <span style="color:#7cfc00;">Você (Host)</span><br>👤 <span style="color:#ffa500;">Convidado</span> 🟢';
+        }
+    }
+    
+    function updateReadyLobbyForGuestReady() {
+        if (readyLobby && readyLobby.style.display === 'block' && isHost) {
+            document.getElementById('ready-status').textContent = 'Convidado está pronto! Clique PRONTO para começar';
+            document.getElementById('ready-players').innerHTML = '🧑‍🌾 <span style="color:#7cfc00;">Você (Host)</span><br>👤 <span style="color:#7cfc00;">Convidado</span> ✅';
+        }
+    }
+    
+    function checkBothReady() {
+        if (isHost && hostReady && guestReady) {
+            // Ambos prontos! Iniciar jogo
+            document.getElementById('ready-status').textContent = '🚀 Iniciando jogo...';
+            document.getElementById('ready-players').innerHTML = '🧑‍🌾 Host ✅<br>👤 Convidado ✅';
+            setTimeout(() => {
+                hideReadyLobby();
+                if (!gameInitialized) {
+                    gameInitialized = true;
+                    startGame();
+                }
+                // Host envia o mundo
+                if (isHost) {
+                    setTimeout(() => sendWorldState(), 500);
+                }
+                showNotification('🚀 Jogo iniciado!');
+            }, 800);
+        } else if (!isHost && hostReady && guestReady) {
+            // Guest pronto, host também - espera worldState
+            document.getElementById('ready-status').textContent = '🚀 Aguardando mundo do host...';
+        }
+    }
+
     function copyRoomCode() {
         if (!roomId) return;
         navigator.clipboard.writeText(roomId).then(() => showNotification('📋 Copiado: ' + roomId)).catch(() => showNotification('📋 Sala: ' + roomId));
     }
     if (roomCodeDisplay) roomCodeDisplay.addEventListener('click', copyRoomCode);
-
-    function showRoomCodeInGame() {
-        if (roomCodeDisplay && roomCodeInline && roomId && isHost) {
-            roomCodeInline.textContent = roomId;
-            roomCodeDisplay.style.display = 'inline-block';
-        }
-    }
+    function showRoomCodeInGame() { if (roomCodeDisplay && roomCodeInline && roomId && isHost) { roomCodeInline.textContent = roomId; roomCodeDisplay.style.display = 'inline-block'; } }
     function hideRoomCodeInGame() { if (roomCodeDisplay) roomCodeDisplay.style.display = 'none'; }
 
     function showLoginError(msg) { loginError.textContent = msg; loginError.style.display = 'block'; setTimeout(() => loginError.style.display = 'none', 3000); }
@@ -67,16 +164,16 @@
         if (conn) try { conn.close(); } catch(e) {}
         if (peer) try { peer.destroy(); } catch(e) {}
         localStorage.removeItem('codegarden_username');
-        hideGame();
-        loginScreen.style.display = 'flex';
-        lobbyScreen.style.display = 'none';
+        hideGame(); hideReadyLobby();
+        loginScreen.style.display = 'flex'; lobbyScreen.style.display = 'none';
         if (roomDisplay) roomDisplay.style.display = 'none';
         loginEmail.value = ''; loginPassword.value = '';
         playerName = ''; roomId = ''; isHost = false;
         document.getElementById('playerNameDisplay').textContent = '';
         multiplayerStatus.style.display = 'none';
         remotePlayers = {}; connectionRetries = 0;
-        worldReceived = false; gameStarted = false;
+        worldReceived = false; gameStarted = false; gameInitialized = false;
+        hostReady = false; guestReady = false;
         hideRoomCodeInGame();
     }
     document.getElementById('logout-btn').addEventListener('click', () => { if (confirm('Sair?')) logout(); });
@@ -97,9 +194,9 @@
             isHost = true;
             if (roomCodeText) roomCodeText.textContent = roomId;
             if (roomDisplay) roomDisplay.style.display = 'block';
-            lobbyInfo.textContent = 'Código acima! Abra outra aba.';
+            lobbyInfo.textContent = 'Código acima!';
             showNotification('🏠 Sala: ' + roomId);
-            setTimeout(() => startConnection(roomId), 300);
+            startConnection(roomId);
         });
 
         document.getElementById('join-btn').addEventListener('click', () => {
@@ -113,7 +210,7 @@
 
         document.getElementById('solo-btn').addEventListener('click', () => {
             roomId = ''; isHost = false;
-            worldReceived = true;
+            worldReceived = true; gameInitialized = true;
             hideLobby(); showGame(); startGame();
         });
     }
@@ -126,6 +223,7 @@
 
         if (peer) { try { peer.destroy(); } catch(e) {} }
         conn = null; connectionRetries = 0;
+        hostReady = false; guestReady = false;
 
         const hostId = 'codegarden_' + room + '_host';
         const guestId = 'codegarden_' + room + '_guest';
@@ -133,28 +231,20 @@
 
         console.log('🆔 Meu ID:', myId, isHost ? '(HOST)' : '(GUEST)');
 
-        peer = new Peer(myId, { 
-            debug: 1,
-            config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
-        });
+        peer = new Peer(myId, { debug: 1, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
 
         peer.on('open', (id) => {
             myPeerId = id;
             console.log('✅ Peer aberto:', id);
+            multiplayerStatus.textContent = isHost ? '🏠 Host' : '🔗 Convidado';
+            multiplayerStatus.style.color = '#7cfc00';
             
             if (isHost) {
-                multiplayerStatus.textContent = '🏠 Host - Aguardando...';
-                multiplayerStatus.style.color = '#ffd700';
-                showNotification('🏠 Aguardando jogador...');
+                showNotification('🏠 Sala criada! Aguardando...');
                 showRoomCodeInGame();
-                worldReceived = true;
-                if (!gameStarted) { gameStarted = true; startGame(); }
+                showReadyLobby();
             } else {
-                multiplayerStatus.textContent = '🔗 Convidado - Buscando host...';
-                multiplayerStatus.style.color = '#ffa500';
                 hideRoomCodeInGame();
-                worldReceived = false;
-                if (!gameStarted) { gameStarted = true; startGame(); }
                 setTimeout(() => tryConnect(hostId), 600);
             }
         });
@@ -164,10 +254,9 @@
             if (isHost && !conn) {
                 conn = incoming;
                 setupDataChannel(conn);
-                multiplayerStatus.textContent = '🏠 Host - 🟢 Jogador conectado!';
-                multiplayerStatus.style.color = '#7cfc00';
-                showNotification('🎉 Jogador entrou! Enviando mundo...');
-                sendWorldState();
+                multiplayerStatus.textContent = '🏠 Host - 🟢 Convidado conectado!';
+                showNotification('👤 Convidado entrou!');
+                updateReadyLobbyForGuestJoin();
             }
         });
 
@@ -179,10 +268,10 @@
                 peer = new Peer(alt, { debug: 1 });
                 peer.on('open', (id2) => {
                     myPeerId = id2;
-                    if (isHost) { showRoomCodeInGame(); worldReceived = true; if (!gameStarted) { gameStarted = true; startGame(); } }
+                    if (isHost) { showRoomCodeInGame(); showReadyLobby(); }
                     else { setTimeout(() => tryConnect(hostId), 600); }
                 });
-                peer.on('connection', (inc) => { if (isHost && !conn) { conn = inc; setupDataChannel(conn); sendWorldState(); } });
+                peer.on('connection', (inc) => { if (isHost && !conn) { conn = inc; setupDataChannel(conn); updateReadyLobbyForGuestJoin(); } });
                 peer.on('error', () => {});
             }
         });
@@ -196,8 +285,7 @@
         
         if (connectionRetries > MAX_RETRIES) {
             multiplayerStatus.textContent = '❌ Host não encontrado';
-            multiplayerStatus.style.color = '#ff6b6b';
-            showNotification('❌ O host criou a sala? Verifique o código.');
+            showNotification('❌ Sala não encontrada.');
             return;
         }
 
@@ -207,23 +295,17 @@
 
         c.on('open', () => {
             if (!done) { 
-                done = true; 
-                conn = c; 
-                setupDataChannel(conn);
-                multiplayerStatus.textContent = '🔗 Convidado - 🟢 Conectado! Aguardando mundo...';
-                multiplayerStatus.style.color = '#7cfc00';
-                showNotification('🔗 Conectado! Aguardando mundo...');
+                done = true; conn = c; setupDataChannel(conn);
+                multiplayerStatus.textContent = '🔗 Convidado - 🟢 Conectado!';
+                showNotification('🔗 Conectado!');
+                showReadyLobby();
             }
         });
         c.on('error', () => {
-            if (!done) { done = true; try { c.close(); } catch(e) {}
-                setTimeout(() => tryConnect(hostId), 1500 + connectionRetries * 500);
-            }
+            if (!done) { done = true; try { c.close(); } catch(e) {} setTimeout(() => tryConnect(hostId), 1500 + connectionRetries * 500); }
         });
         setTimeout(() => {
-            if (!done) { done = true; try { c.close(); } catch(e) {}
-                setTimeout(() => tryConnect(hostId), 1000);
-            }
+            if (!done) { done = true; try { c.close(); } catch(e) {} setTimeout(() => tryConnect(hostId), 1000); }
         }, timeout);
     }
 
@@ -233,30 +315,17 @@
         try {
             const ws = {
                 type: 'worldState',
-                map: map,
-                crops: crops,
-                buildings: buildings,
+                map: map, crops: crops, buildings: buildings,
                 wildAnimals: wildAnimals.map(a => ({ x: a.x, y: a.y, species: a.species, stage: a.stage, name: a.name, feedCount: a.feedCount || 0, isLeashed: a.isLeashed || false })),
-                hostName: playerName,
-                roomCode: roomId,
-                hostTileX: player.tileX,
-                hostTileY: player.tileY,
-                hostX: player.x,
-                hostY: player.y,
-                timeOffset: timeOffset,
-                playerCoins: playerCoins,
-                playerWater: playerWater,
-                hasWateringCan: hasWateringCan,
-                hasBoots: hasBoots,
-                playerXP: playerXP,
-                playerLevel: playerLevel,
-                unlockedItems: unlockedItems,
-                selectedCrop: selectedCrop,
-                selectedTool: selectedTool,
-                playerName: playerName
+                hostName: playerName, roomCode: roomId,
+                hostTileX: player.tileX, hostTileY: player.tileY,
+                hostX: player.x, hostY: player.y,
+                timeOffset: timeOffset, playerCoins: playerCoins, playerWater: playerWater,
+                hasWateringCan: hasWateringCan, hasBoots: hasBoots,
+                playerXP: playerXP, playerLevel: playerLevel, unlockedItems: unlockedItems
             };
             conn.send(ws);
-            console.log('📤 Mundo enviado ao guest. Tamanho do mapa:', map.length, 'x', map[0]?.length);
+            console.log('📤 Mundo enviado ao guest.');
         } catch(e) { console.error('Erro ao enviar mundo:', e); }
     }
 
@@ -271,34 +340,26 @@
                     } else {
                         Object.assign(remotePlayers[data.id], { x: data.x, y: data.y, tileX: data.tileX, tileY: data.tileY });
                     }
+                } else if (data.type === 'ready' && isHost) {
+                    guestReady = true;
+                    updateReadyLobbyForGuestReady();
+                    if (hostReady) checkBothReady();
                 } else if (data.type === 'worldState' && !isHost) {
-                    console.log('📥 RECEBENDO MUNDO DO HOST...');
-                    console.log('  Mapa:', data.map ? data.map.length + 'x' + data.map[0]?.length : 'NÃO VEIO');
-                    
+                    console.log('📥 RECEBENDO MUNDO...');
                     if (data.map && Array.isArray(data.map) && data.map.length > 0) {
-                        // Cópia profunda do mapa
                         map = data.map.map(row => [...row]);
-                        console.log('✅ Mapa copiado. Posição [20][20]:', map[20]?.[20]);
                     }
-                    if (data.crops) {
-                        crops = JSON.parse(JSON.stringify(data.crops));
-                        console.log('✅ Culturas:', Object.keys(crops).length);
-                    }
-                    if (data.buildings && Array.isArray(data.buildings)) {
-                        buildings = JSON.parse(JSON.stringify(data.buildings));
-                        console.log('✅ Construções:', buildings.length);
-                    }
-                    if (data.wildAnimals && Array.isArray(data.wildAnimals)) {
+                    if (data.crops) crops = JSON.parse(JSON.stringify(data.crops));
+                    if (data.buildings) buildings = JSON.parse(JSON.stringify(data.buildings));
+                    if (data.wildAnimals) {
                         wildAnimals = data.wildAnimals.map(a => {
                             const animal = createAnimal(a.species, a.x, a.y);
                             animal.stage = a.stage || 0;
                             animal.name = a.name || animal.name;
                             animal.feedCount = a.feedCount || 0;
                             animal.isLeashed = a.isLeashed || false;
-                            animal.growthStart = Date.now() - (animal.stage === 2 ? GROWTH_STAGE2 : animal.stage === 1 ? GROWTH_STAGE1 : 0);
                             return animal;
                         });
-                        console.log('✅ Animais:', wildAnimals.length);
                     }
                     if (data.timeOffset !== undefined) timeOffset = data.timeOffset;
                     if (data.playerXP !== undefined) playerXP = data.playerXP;
@@ -312,39 +373,27 @@
                     // Posiciona guest perto do host
                     const hx = data.hostTileX || 25, hy = data.hostTileY || 20;
                     let placed = false;
-                    for (let dy = 0; dy < 10 && !placed; dy++) {
+                    for (let dy = 0; dy < 10 && !placed; dy++)
                         for (let dx = -5; dx <= 5 && !placed; dx++) {
                             const cx = hx + dx, cy = hy + dy;
-                            if (cx >= 0 && cx < MAP_W && cy >= 0 && cy < MAP_H) {
-                                const tile = map[cy] ? map[cy][cx] : TILE_RIVER;
-                                if (tile !== TILE_RIVER && tile !== TILE_FENCE) {
-                                    player.tileX = cx; player.tileY = cy;
-                                    player.x = cx + 0.5; player.y = cy + 0.5;
-                                    player.destX = player.x; player.destY = player.y;
-                                    placed = true;
-                                    console.log('📍 Guest spawnado em:', cx, cy);
-                                }
+                            if (cx >= 0 && cx < MAP_W && cy >= 0 && cy < MAP_H && map[cy] && map[cy][cx] !== TILE_RIVER && map[cy][cx] !== TILE_FENCE) {
+                                player.tileX = cx; player.tileY = cy;
+                                player.x = cx + 0.5; player.y = cy + 0.5;
+                                player.destX = player.x; player.destY = player.y;
+                                placed = true;
                             }
                         }
-                    }
-                    if (!placed) {
-                        player.tileX = Math.min(hx + 2, MAP_W - 2);
-                        player.tileY = Math.min(hy, MAP_H - 2);
-                        player.x = player.tileX + 0.5;
-                        player.y = player.tileY + 0.5;
-                    }
+                    if (!placed) { player.tileX = Math.min(hx+2, MAP_W-2); player.tileY = Math.min(hy, MAP_H-2); player.x = player.tileX+0.5; player.y = player.tileY+0.5; }
 
                     worldReceived = true;
                     updateWaterBar(); updateHotbar(); updateShopUI();
                     document.getElementById('xpDisplay').textContent = `⭐ Nv.${playerLevel} | XP: ${playerXP}/${playerLevel * XP_PER_LEVEL} 💰${playerCoins}`;
                     multiplayerStatus.textContent = '🔗 Convidado - 🟢 Mundo sincronizado!';
-                    multiplayerStatus.style.color = '#7cfc00';
-                    showNotification('🌍 Mundo de ' + (data.hostName || 'Host') + ' carregado!');
+                    showNotification('🌍 Mundo carregado!');
                     console.log('✅ Sincronização completa!');
-                    
-                    // Enviar posição inicial de volta
+                    hideReadyLobby();
+                    if (!gameInitialized) { gameInitialized = true; startGame(); }
                     setTimeout(() => broadcastPosition(), 300);
-                    
                 } else if (data.type === 'action') {
                     handleRemoteAction(data);
                 }
@@ -352,10 +401,9 @@
         });
         c.on('close', () => {
             showNotification('🔌 Jogador desconectou.');
-            multiplayerStatus.textContent = '⚫ Desconectado'; multiplayerStatus.style.color = '#888';
+            multiplayerStatus.textContent = '⚫ Desconectado';
             conn = null;
         });
-        c.on('error', (e) => console.error('Erro canal:', e));
     }
 
     function broadcastPosition() {
@@ -363,7 +411,6 @@
             try { conn.send({ type: 'position', id: myPeerId, x: player.x, y: player.y, tileX: player.tileX, tileY: player.tileY, name: playerName }); } catch(e) {}
         }
     }
-
     function broadcastAction(d) { if (conn && conn.open) try { conn.send({ type: 'action', ...d }); } catch(e) {} }
 
     function handleRemoteAction(data) {
@@ -430,7 +477,12 @@
         document.getElementById('friend-input').value=''; showNotification('👥 '+n+' adicionado!');
     });
 
-    function startGame() { initGame(); }
+    function startGame() {
+        if (!gameInitialized) {
+            gameInitialized = true;
+            initGame();
+        }
+    }
 
     function initGame() {
         const canvas = document.getElementById('gameCanvas'); const ctx = canvas.getContext('2d'); ctx.imageSmoothingEnabled = false;
@@ -528,11 +580,8 @@
         document.getElementById('close-shop').addEventListener('click',()=>document.getElementById('shop-modal').style.display='none');
         bindShopButtons();
 
-        // Inicialização: SÓ host ou solo geram mapa
-        if (isHost || !roomId) {
-            initializeMap();
-            worldReceived = true;
-        }
+        // Inicialização: SÓ host gera mapa
+        if (isHost) { initializeMap(); worldReceived = true; }
 
         function initializeMap() { for (let y=0;y<MAP_H;y++) for (let x=0;x<MAP_W;x++) map[y][x]=TILE_GRASS; for (let r=0;r<2;r++) { let cx=10+Math.floor(Math.random()*(MAP_W-20)),cy=0; while (cy<MAP_H) { if (!(cx>=farmHouse.x&&cx<farmHouse.x+farmHouse.w&&cy>=farmHouse.y&&cy<farmHouse.y+farmHouse.h)) { map[cy][cx]=TILE_RIVER; if (Math.random()<.2&&cx+1<MAP_W) map[cy][cx+1]=TILE_RIVER; } cx+=Math.floor(Math.random()*3)-1; cy+=1; cx=Math.max(1,Math.min(MAP_W-2,cx)); } } for (let i=0;i<18;i++) { let cx=Math.floor(Math.random()*MAP_W),cy=Math.floor(Math.random()*MAP_H); for (let j=0;j<10;j++) { let tx=cx+Math.floor(Math.random()*6-3),ty=cy+Math.floor(Math.random()*6-3); if (tx>=0&&tx<MAP_W&&ty>=0&&ty<MAP_H&&map[ty][tx]===TILE_GRASS&&!(tx>=farmHouse.x&&tx<farmHouse.x+farmHouse.w&&ty>=farmHouse.y&&ty<farmHouse.y+farmHouse.h)&&Math.random()<.4) map[ty][tx]=TILE_TREE; } } for (let i=0;i<25;i++) { let cx=Math.floor(Math.random()*MAP_W),cy=Math.floor(Math.random()*MAP_H); for (let j=0;j<4;j++) { let bx=cx+Math.floor(Math.random()*4-2),by=cy+Math.floor(Math.random()*4-2); if (bx>=0&&bx<MAP_W&&by>=0&&by<MAP_H&&map[by][bx]===TILE_GRASS) map[by][bx]=TILE_BUSH; } } for (let i=0;i<12;i++) { let fx=Math.floor(Math.random()*MAP_W),fy=Math.floor(Math.random()*MAP_H); if (map[fy][fx]===TILE_GRASS) { map[fy][fx]=TILE_FRUIT_TREE; fruitTreeTimers[`${fx},${fy}`]=0; } } const initSpec=['chicken','chicken','cow','pig','duck','rabbit','sheep','chicken','duck','rabbit']; initSpec.forEach(spec=>{ let ax,ay; do { ax=Math.floor(Math.random()*MAP_W); ay=Math.floor(Math.random()*MAP_H); } while (!isWalkable(ax,ay)||map[ay][ax]!==TILE_GRASS); wildAnimals.push(createAnimal(spec,ax+.5,ay+.5)); }); }
         function createAnimal(species,x,y) { return { x,y,targetX:x,targetY:y,species,name:SPECIES_NAMES[species],type:SPECIES_EMOJIS[species],speed:SPECIES_SPEEDS[species]||.02,dir:'front',isInteracting:false,isLeashed:false,fed:false,timer:Math.random()*100,stage:0,growthStart:Date.now(),promptTimer:0,feedCount:0 }; }
@@ -597,16 +646,13 @@
         for (let k in crops) { const [x,y]=k.split(',').map(Number),px=(x-camX)*TILE_SIZE,py=(y-camY)*TILE_SIZE,c=crops[k],prog=Math.min(c.timer/c.growTime,1),stage=Math.floor(prog*3); ctx.fillStyle=['#90EE90','#ADFF2F','#FFD700','#FF8C00'][stage]; ctx.fillRect(px+TILE_SIZE*.3,py+TILE_SIZE*.4,TILE_SIZE*.4,TILE_SIZE*.5); if (c.ready) { ctx.fillStyle='#fff'; ctx.font=`${TILE_SIZE*.3}px "Press Start 2P"`; ctx.fillText('★',px+TILE_SIZE*.35,py+TILE_SIZE*.25); } }
         buildings.forEach(b=>{ const px=(b.x-camX)*TILE_SIZE,py=(b.y-camY)*TILE_SIZE; if (!b.isReady) { ctx.fillStyle='gray'; ctx.fillRect(px,py-10,TILE_SIZE,5); ctx.fillStyle='lime'; ctx.fillRect(px,py-10,TILE_SIZE*b.progress,5); } else { if (b.type==='well') drawWell(px,py); else drawBarnOrSilo(px,py,b.type); } });
         wildAnimals.forEach(a=>{ const px=(a.x-camX)*TILE_SIZE,py=(a.y-camY)*TILE_SIZE,sizeScale=[.5,.75,1][a.stage]; ctx.font=`${TILE_SIZE*.5*sizeScale}px "Press Start 2P"`; ctx.fillText(a.type,px+TILE_SIZE*.15,py+TILE_SIZE*.7); if (a.isLeashed) { ctx.strokeStyle='#ff69b4'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo((player.x-camX)*TILE_SIZE+TILE_SIZE/2,(player.y-camY)*TILE_SIZE+TILE_SIZE/2); ctx.lineTo(px+TILE_SIZE/2,py+TILE_SIZE/2); ctx.stroke(); ctx.lineWidth=1; } });
-        // Desenhar jogadores remotos
         for (let id in remotePlayers) { const rp=remotePlayers[id]; const rpx=(rp.x-camX)*TILE_SIZE,rpy=(rp.y-camY)*TILE_SIZE; ctx.fillStyle='#ff6347'; ctx.font=`${TILE_SIZE*.6}px "Press Start 2P"`; ctx.fillText('👤',rpx+TILE_SIZE*.15,rpy+TILE_SIZE*.8); ctx.fillStyle='#fff'; ctx.font=`${TILE_SIZE*.2}px "Press Start 2P"`; ctx.fillText(rp.name||'?',rpx+TILE_SIZE*.1,rpy-5); }
         const ppx=(player.x-camX)*TILE_SIZE,ppy=(player.y-camY)*TILE_SIZE; ctx.fillStyle='#3b5998'; ctx.font=`${TILE_SIZE*.7}px "Press Start 2P"`; ctx.fillText('🧑‍🌾',ppx+TILE_SIZE*.1,ppy+TILE_SIZE*.8);
-        // Tela de "Aguardando" para guest
-        if (!isHost && roomId && !worldReceived && conn) {
+        if (!isHost && roomId && !worldReceived) {
             ctx.fillStyle='rgba(0,0,0,0.8)'; ctx.fillRect(0,0,canvas.width,canvas.height);
             ctx.fillStyle='#ffd700'; ctx.font='18px "Press Start 2P"'; ctx.textAlign='center';
-            ctx.fillText('🟡 Conectado ao host!',canvas.width/2,canvas.height/2-20);
-            ctx.fillText('Aguardando sincronização...',canvas.width/2,canvas.height/2+20);
-            ctx.fillText('O mundo será carregado em breve',canvas.width/2,canvas.height/2+50);
+            ctx.fillText('🟡 Aguardando o host',canvas.width/2,canvas.height/2-20);
+            ctx.fillText('iniciar o jogo...',canvas.width/2,canvas.height/2+20);
             ctx.textAlign='left';
         }
         if (ov) { ctx.fillStyle=ov; ctx.fillRect(0,0,canvas.width,canvas.height); }
