@@ -698,3 +698,23 @@ textarea {
   font-size: 8px;
   text-align: center;
 }
+#room-code-display:hover {
+  background: rgba(0, 0, 0, 0.9);
+  border-color: #fff;
+}
+.friend-row .invite-btn {
+  background: #7cfc00;
+  border: none;
+  border-bottom: 3px solid #3a7a00;
+  color: #1a3a1a;
+  font-family: "Press Start 2P", cursive;
+  font-size: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+.friend-row .invite-btn:active {
+  transform: translateY(2px);
+  border-bottom-width: 1px;
+}

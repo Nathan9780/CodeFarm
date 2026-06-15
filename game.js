@@ -14,6 +14,8 @@
   const lobbyScreen = document.getElementById("lobby-screen");
   const roomDisplay = document.getElementById("room-display");
   const roomCodeText = document.getElementById("room-code-text");
+  const roomCodeDisplay = document.getElementById("room-code-display");
+  const roomCodeInline = document.getElementById("room-code-inline");
   const loginEmail = document.getElementById("login-email");
   const loginPassword = document.getElementById("login-password");
   const loginBtn = document.getElementById("login-btn");
@@ -23,6 +25,43 @@
   const hintBubble = document.getElementById("hint-bubble");
   const multiplayerStatus = document.getElementById("multiplayer-status");
   const savedName = localStorage.getItem("codegarden_username");
+
+  // ========== COPIAR CÓDIGO DA SALA ==========
+  function copyRoomCode() {
+    if (!roomId) return;
+    navigator.clipboard
+      .writeText(roomId)
+      .then(() => {
+        showNotification("📋 Código copiado: " + roomId);
+      })
+      .catch(() => {
+        // Fallback para navegadores antigos
+        const input = document.createElement("input");
+        input.value = roomId;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand("copy");
+        document.body.removeChild(input);
+        showNotification("📋 Código copiado: " + roomId);
+      });
+  }
+
+  if (roomCodeDisplay) {
+    roomCodeDisplay.addEventListener("click", copyRoomCode);
+  }
+
+  function showRoomCodeInGame() {
+    if (roomCodeDisplay && roomCodeInline && roomId && isHost) {
+      roomCodeInline.textContent = roomId;
+      roomCodeDisplay.style.display = "inline-block";
+    }
+  }
+
+  function hideRoomCodeInGame() {
+    if (roomCodeDisplay) {
+      roomCodeDisplay.style.display = "none";
+    }
+  }
 
   function showLoginError(msg) {
     loginError.textContent = msg;
@@ -51,6 +90,7 @@
               ? "flex"
               : "flex";
       });
+    showRoomCodeInGame();
   }
   function hideGame() {
     document
@@ -60,6 +100,7 @@
       .forEach((el) => {
         if (el) el.style.display = "none";
       });
+    hideRoomCodeInGame();
   }
 
   function logout() {
@@ -77,17 +118,20 @@
     loginEmail.value = "";
     loginPassword.value = "";
     playerName = "";
+    roomId = "";
+    isHost = false;
     document.getElementById("playerNameDisplay").textContent = "";
     document.getElementById("multiplayer-status").style.display = "none";
     remotePlayers = {};
     connectionRetries = 0;
+    hideRoomCodeInGame();
   }
 
   document.getElementById("logout-btn").addEventListener("click", () => {
     if (confirm("Tem certeza que deseja sair?")) logout();
   });
 
-  // ========== MULTIPLAYER CORRIGIDO ==========
+  // ========== MULTIPLAYER ==========
   function initMultiplayer() {
     const roomInput = document.getElementById("room-id-input");
     const lobbyInfo = document.getElementById("lobby-info");
@@ -118,6 +162,8 @@
     });
 
     document.getElementById("solo-btn").addEventListener("click", () => {
+      roomId = "";
+      isHost = false;
       hideLobby();
       showGame();
       startGame();
@@ -133,7 +179,6 @@
 
     if (peer) peer.destroy();
 
-    // ID único para evitar conflitos
     const uniqueId = room + "_" + Date.now().toString(36);
     const peerId = isHost ? "host_" + uniqueId : "guest_" + uniqueId;
 
@@ -144,15 +189,15 @@
       console.log("✅ Peer aberto:", id);
 
       if (isHost) {
-        document.getElementById("multiplayer-status").textContent =
-          "🏠 Host - Aguardando...";
+        document.getElementById("multiplayer-status").textContent = "🏠 Host";
         document.getElementById("multiplayer-status").style.color = "#ffd700";
         showNotification("🏠 Aguardando jogador...");
+        showRoomCodeInGame();
       } else {
         document.getElementById("multiplayer-status").textContent =
-          "🔗 Convidado - Buscando...";
+          "🔗 Convidado";
         document.getElementById("multiplayer-status").style.color = "#ffa500";
-        // Guest tenta conectar
+        hideRoomCodeInGame();
         setTimeout(() => connectToHost(room), 800);
       }
 
@@ -169,7 +214,6 @@
         document.getElementById("multiplayer-status").style.color = "#7cfc00";
         showNotification("👤 Jogador entrou!");
 
-        // Enviar estado do mundo
         setTimeout(() => {
           if (conn && conn.open && typeof map !== "undefined") {
             conn.send({
@@ -185,6 +229,7 @@
                 name: a.name,
               })),
               hostName: playerName,
+              roomCode: roomId,
             });
           }
         }, 600);
@@ -208,12 +253,7 @@
       return;
     }
 
-    // Tenta conexão com o host
-    const possibleHostIds = [
-      "host_" + room,
-      "host_" + room + "_",
-      "codegarden_" + room + "_host",
-    ];
+    const possibleHostIds = ["host_" + room, "host_" + room + "_"];
 
     let connected = false;
 
@@ -235,6 +275,7 @@
             document.getElementById("multiplayer-status").style.color =
               "#7cfc00";
             showNotification("🔗 Conectado!");
+            if (isHost) showRoomCodeInGame();
           }
         });
 
@@ -244,7 +285,6 @@
       }, index * 1500);
     });
 
-    // Retry se não conectar
     setTimeout(() => {
       if (!connected) {
         connectToHost(room);
@@ -284,6 +324,11 @@
           wildAnimals = data.wildAnimals.map((a) =>
             createAnimal(a.species, a.x, a.y),
           );
+        }
+        if (data.roomCode && !isHost) {
+          roomId = data.roomCode;
+          document.getElementById("multiplayer-status").textContent =
+            "🔗 Convidado - " + roomId;
         }
         if (data.hostName)
           showNotification("🌍 Mundo de " + data.hostName + " carregado!");
@@ -406,7 +451,7 @@
 
   initMultiplayer();
 
-  // ========== AMIGOS ==========
+  // ========== AMIGOS COM CONVITE ==========
   function getFriends() {
     const data = localStorage.getItem("codegarden_friends_" + playerName);
     return data ? JSON.parse(data) : [];
@@ -424,11 +469,18 @@
       friends.length === 0
         ? '<div style="color:#888;font-size:7px;padding:10px;">Nenhum amigo ainda.</div>'
         : friends
-            .map(
-              (f) =>
-                `<div class="friend-row"><span>🧑‍🌾 ${f.name}</span><span class="${Math.random() > 0.5 ? "online" : "offline"}">${Math.random() > 0.5 ? "🟢 Online" : "⚫ Offline"}</span><button class="btn" style="font-size:6px;padding:4px 6px;" data-remove="${f.name}">✖</button></div>`,
-            )
+            .map((f) => {
+              const hasRoom = isHost && roomId;
+              return `<div class="friend-row">
+                    <span>🧑‍🌾 ${f.name}</span>
+                    <span class="${Math.random() > 0.5 ? "online" : "offline"}">${Math.random() > 0.5 ? "🟢 Online" : "⚫ Offline"}</span>
+                    ${hasRoom ? `<button class="invite-btn" data-invite="${f.name}" title="Convidar para o mundo">📨</button>` : ""}
+                    <button class="btn" style="font-size:6px;padding:4px 6px;" data-remove="${f.name}">✖</button>
+                </div>`;
+            })
             .join("");
+
+    // Eventos dos botões
     list.querySelectorAll("[data-remove]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         saveFriends(
@@ -439,7 +491,59 @@
         renderFriends();
       });
     });
+    list.querySelectorAll("[data-invite]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const friendName = e.target.getAttribute("data-invite");
+        inviteFriend(friendName);
+      });
+    });
   }
+
+  function inviteFriend(friendName) {
+    if (!roomId || !isHost) {
+      showNotification("❌ Você precisa ser o host de uma sala!");
+      return;
+    }
+    copyRoomCode();
+    showNotification(
+      "📨 Convite enviado para " + friendName + "! Código: " + roomId,
+    );
+    document.getElementById("friends-modal").style.display = "none";
+    // Salva o convite no localStorage para o amigo ver
+    const invites = JSON.parse(
+      localStorage.getItem("codegarden_invites_" + friendName) || "[]",
+    );
+    if (!invites.find((i) => i.from === playerName && i.roomId === roomId)) {
+      invites.push({ from: playerName, roomId: roomId, time: Date.now() });
+      localStorage.setItem(
+        "codegarden_invites_" + friendName,
+        JSON.stringify(invites),
+      );
+    }
+  }
+
+  // Verificar convites ao iniciar
+  function checkInvites() {
+    const invites = JSON.parse(
+      localStorage.getItem("codegarden_invites_" + playerName) || "[]",
+    );
+    if (invites.length > 0) {
+      const recentInvite = invites[invites.length - 1];
+      const timeSinceInvite = Date.now() - recentInvite.time;
+      if (timeSinceInvite < 5 * 60 * 1000) {
+        // 5 minutos
+        showNotification(
+          "📨 Convite de " +
+            recentInvite.from +
+            "! Sala: " +
+            recentInvite.roomId,
+        );
+      }
+      // Limpar convites antigos
+      localStorage.setItem("codegarden_invites_" + playerName, "[]");
+    }
+  }
+
   document.getElementById("friends-btn").addEventListener("click", () => {
     document.getElementById("friends-modal").style.display = "block";
     renderFriends();
@@ -473,6 +577,7 @@
 
   function startGame() {
     initGame();
+    checkInvites();
   }
 
   function initGame() {
@@ -2189,5 +2294,6 @@
     updateWaterBar();
     updateShopUI();
     commandInput.focus();
+    showRoomCodeInGame();
   }
 })();
