@@ -8,7 +8,9 @@
     let myPeerId = null;
     let roomId = '';
     let connectionRetries = 0;
-    const MAX_RETRIES = 8;
+    const MAX_RETRIES = 12;
+    let worldReady = false; // NOVO: controle se o mundo está pronto
+    let pendingWorldState = null; // NOVO: armazena estado do mundo enquanto inicializa
 
     const loginScreen = document.getElementById('login-screen');
     const lobbyScreen = document.getElementById('lobby-screen');
@@ -45,9 +47,7 @@
         }
     }
 
-    if (roomCodeDisplay) {
-        roomCodeDisplay.addEventListener('click', copyRoomCode);
-    }
+    if (roomCodeDisplay) roomCodeDisplay.addEventListener('click', copyRoomCode);
 
     function showRoomCodeInGame() {
         if (roomCodeDisplay && roomCodeInline && roomId && isHost) {
@@ -57,9 +57,7 @@
     }
 
     function hideRoomCodeInGame() {
-        if (roomCodeDisplay) {
-            roomCodeDisplay.style.display = 'none';
-        }
+        if (roomCodeDisplay) roomCodeDisplay.style.display = 'none';
     }
 
     function showLoginError(msg) { loginError.textContent = msg; loginError.style.display = 'block'; setTimeout(() => loginError.style.display = 'none', 3000); }
@@ -99,12 +97,14 @@
         document.getElementById('multiplayer-status').style.display = 'none';
         remotePlayers = {};
         connectionRetries = 0;
+        worldReady = false;
+        pendingWorldState = null;
         hideRoomCodeInGame();
     }
 
     document.getElementById('logout-btn').addEventListener('click', () => { if (confirm('Tem certeza que deseja sair?')) logout(); });
 
-    // ========== MULTIPLAYER CORRIGIDO ==========
+    // ========== MULTIPLAYER ==========
     function initMultiplayer() {
         const roomInput = document.getElementById('room-id-input');
         const lobbyInfo = document.getElementById('lobby-info');
@@ -115,9 +115,8 @@
             isHost = true;
             if (roomCodeText) roomCodeText.textContent = roomId;
             if (roomDisplay) roomDisplay.style.display = 'block';
-            lobbyInfo.textContent = 'Compartilhe o código acima!';
-            showNotification('🏠 Sala criada! Código: ' + roomId);
-            // Pequeno delay para garantir que o lobby suma antes de iniciar
+            lobbyInfo.textContent = 'Compartilhe o código acima! (Abra em outra aba)';
+            showNotification('🏠 Sala criada! Código: ' + roomId + ' | Abra outra aba para testar');
             setTimeout(() => startPeer(roomId), 300);
         });
 
@@ -142,14 +141,12 @@
     function startPeer(room) {
         hideLobby();
         showGame();
-        
-        // Destruir peer anterior se existir
-        if (peer) {
-            try { peer.destroy(); } catch(e) {}
-        }
+        multiplayerStatus.style.display = 'block';
+        multiplayerStatus.textContent = '🟡 Conectando...';
+        multiplayerStatus.style.color = '#ffa500';
 
-        // ID FIXO baseado na sala (sem timestamp)
-        // Isso garante que o guest consiga encontrar o host
+        if (peer) { try { peer.destroy(); } catch(e) {} }
+
         const hostPeerId = 'codegarden_' + room + '_host';
         const guestPeerId = 'codegarden_' + room + '_guest';
         const myId = isHost ? hostPeerId : guestPeerId;
@@ -157,12 +154,12 @@
         console.log('🆔 Meu ID PeerJS:', myId, '| Host:', isHost);
         
         peer = new Peer(myId, { 
-            debug: 0,
-            // Configurações para melhorar conexão
+            debug: 1,
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' }
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' }
                 ]
             }
         });
@@ -172,36 +169,37 @@
             console.log('✅ Peer aberto com sucesso:', id);
             
             if (isHost) {
-                multiplayerStatus.textContent = '🏠 Host - Aguardando...';
+                multiplayerStatus.textContent = '🏠 Host - Aguardando jogador...';
                 multiplayerStatus.style.color = '#ffd700';
-                showNotification('🏠 Aguardando jogador...');
+                showNotification('🏠 Aguardando jogador... Abra outra aba e cole o código!');
                 showRoomCodeInGame();
+                worldReady = true; // Host já gera o mundo
             } else {
                 multiplayerStatus.textContent = '🔗 Convidado - Conectando...';
                 multiplayerStatus.style.color = '#ffa500';
                 hideRoomCodeInGame();
-                // Guest tenta conectar ao host imediatamente
-                setTimeout(() => connectToHost(room, hostPeerId), 500);
+                worldReady = false; // Guest espera o worldState
+                console.log('🔍 Guest tentando conectar ao host:', hostPeerId);
+                setTimeout(() => connectToHost(room, hostPeerId), 800);
             }
             
             startGame();
         });
 
-        // Host: listener para conexões recebidas
         peer.on('connection', (incomingConn) => {
             console.log('📞 Conexão recebida de:', incomingConn.peer);
             if (isHost && !conn) {
                 conn = incomingConn;
                 setupConnection(conn);
-                multiplayerStatus.textContent = '🏠 Host - Jogador conectado';
+                multiplayerStatus.textContent = '🏠 Host - 🟢 Jogador conectado!';
                 multiplayerStatus.style.color = '#7cfc00';
-                showNotification('👤 Jogador entrou na sala!');
+                showNotification('🎉 Jogador entrou na sala! Bem-vindo!');
                 
-                // Enviar estado do mundo
+                // Enviar estado COMPLETO do mundo com posição do host
                 setTimeout(() => {
-                    if (conn && conn.open && typeof map !== 'undefined') {
+                    if (conn && conn.open && typeof map !== 'undefined' && typeof player !== 'undefined') {
                         try {
-                            conn.send({
+                            const worldState = {
                                 type: 'worldState',
                                 map: map,
                                 crops: crops,
@@ -211,9 +209,15 @@
                                     stage: a.stage, name: a.name
                                 })),
                                 hostName: playerName,
-                                roomCode: roomId
-                            });
-                            console.log('📤 Estado do mundo enviado ao guest');
+                                roomCode: roomId,
+                                // POSIÇÃO DO HOST para o guest spawnar perto
+                                hostTileX: player.tileX,
+                                hostTileY: player.tileY,
+                                hostX: player.x,
+                                hostY: player.y
+                            };
+                            conn.send(worldState);
+                            console.log('📤 Estado do mundo + posição do host enviados');
                         } catch(e) {
                             console.error('Erro ao enviar estado:', e);
                         }
@@ -225,66 +229,63 @@
         peer.on('error', (err) => {
             console.error('❌ Peer error:', err);
             if (err.type === 'unavailable-id') {
-                // O ID já está em uso - tenta com um sufixo
                 const fallbackId = myId + '_' + Math.random().toString(36).slice(2, 6);
-                console.log('🔄 Tentando ID alternativo:', fallbackId);
+                console.log('🔄 ID em uso, tentando:', fallbackId);
                 try { peer.destroy(); } catch(e) {}
-                peer = new Peer(fallbackId, { debug: 0 });
-                // Reconfigurar eventos no novo peer
+                peer = new Peer(fallbackId, { debug: 1 });
                 setupPeerEvents(peer, room, fallbackId);
             } else {
-                multiplayerStatus.textContent = '❌ Erro de conexão';
+                multiplayerStatus.textContent = '❌ Erro: ' + err.message;
                 multiplayerStatus.style.color = '#ff6b6b';
             }
         });
         
         peer.on('disconnected', () => {
             console.log('🔌 Peer desconectado, tentando reconectar...');
-            if (peer && !peer.destroyed) {
-                peer.reconnect();
-            }
+            multiplayerStatus.textContent = '🟡 Reconectando...';
+            if (peer && !peer.destroyed) peer.reconnect();
         });
     }
     
     function setupPeerEvents(newPeer, room, peerId) {
         newPeer.on('open', (id) => {
             myPeerId = id;
-            console.log('✅ Peer alternativo aberto:', id);
             if (isHost) {
                 multiplayerStatus.textContent = '🏠 Host - Aguardando...';
                 showRoomCodeInGame();
+                worldReady = true;
             } else {
-                setTimeout(() => connectToHost(room, 'codegarden_' + room + '_host'), 500);
+                worldReady = false;
+                const hostId = 'codegarden_' + room + '_host';
+                setTimeout(() => connectToHost(room, hostId), 800);
             }
         });
-        
         newPeer.on('connection', (incomingConn) => {
             if (isHost && !conn) {
                 conn = incomingConn;
                 setupConnection(conn);
-                multiplayerStatus.textContent = '🏠 Host - Jogador conectado';
+                multiplayerStatus.textContent = '🏠 Host - 🟢 Conectado!';
                 multiplayerStatus.style.color = '#7cfc00';
-                showNotification('👤 Jogador entrou!');
+                showNotification('🎉 Jogador entrou!');
             }
         });
-        
-        newPeer.on('error', (err) => {
-            console.error('❌ Erro no peer alternativo:', err);
-        });
+        newPeer.on('error', (err) => console.error('Erro:', err));
     }
 
     function connectToHost(room, hostPeerId) {
-        if (conn) return; // Já está conectado
+        if (conn) { console.log('⚠️ Já conectado'); return; }
         
         connectionRetries++;
-        console.log(`🔍 Tentativa ${connectionRetries}/${MAX_RETRIES} de conectar a: ${hostPeerId}`);
+        console.log(`🔍 Tentativa ${connectionRetries}/${MAX_RETRIES}: ${hostPeerId}`);
         
         if (connectionRetries > MAX_RETRIES) {
             multiplayerStatus.textContent = '❌ Sala não encontrada';
             multiplayerStatus.style.color = '#ff6b6b';
-            showNotification('❌ Não foi possível conectar. Verifique o código da sala.');
+            showNotification('❌ Não foi possível conectar. O host criou a sala?');
             return;
         }
+
+        multiplayerStatus.textContent = '🔗 Tentativa ' + connectionRetries + '/' + MAX_RETRIES;
 
         try {
             const connection = peer.connect(hostPeerId, { 
@@ -293,6 +294,7 @@
             });
             
             let resolved = false;
+            const timeout = 5000;
             
             connection.on('open', () => {
                 if (!resolved) {
@@ -300,35 +302,29 @@
                     console.log('✅ Conectado ao host!');
                     conn = connection;
                     setupConnection(conn);
-                    multiplayerStatus.textContent = '🔗 Convidado - Conectado';
+                    multiplayerStatus.textContent = '🔗 Convidado - 🟢 Conectado! Aguardando mundo...';
                     multiplayerStatus.style.color = '#7cfc00';
-                    showNotification('🔗 Conectado ao host!');
+                    showNotification('🔗 Conectado! Recebendo mundo do host...');
                 }
             });
             
             connection.on('error', (err) => {
-                console.log('❌ Erro na tentativa de conexão:', err);
                 if (!resolved) {
                     resolved = true;
-                    // Tentar novamente após delay
-                    setTimeout(() => {
-                        if (!conn) connectToHost(room, hostPeerId);
-                    }, 2000);
+                    const delay = Math.min(connectionRetries * 1500, 6000);
+                    setTimeout(() => { if (!conn) connectToHost(room, hostPeerId); }, delay);
                 }
             });
             
-            // Timeout: se não conectar em 3 segundos, tenta de novo
             setTimeout(() => {
                 if (!resolved && !conn) {
                     resolved = true;
-                    console.log('⏰ Timeout na conexão, tentando novamente...');
                     try { connection.close(); } catch(e) {}
-                    connectToHost(room, hostPeerId);
+                    setTimeout(() => connectToHost(room, hostPeerId), 1500);
                 }
-            }, 3000);
+            }, timeout);
             
         } catch(e) {
-            console.error('Erro ao tentar conectar:', e);
             setTimeout(() => connectToHost(room, hostPeerId), 2000);
         }
     }
@@ -346,7 +342,7 @@
                             name: data.name || 'Jogador',
                             dir: 'front'
                         };
-                        showNotification('👤 ' + (data.name || 'Jogador') + ' entrou!');
+                        showNotification('👤 ' + (data.name || 'Jogador') + ' apareceu no mapa!');
                     } else {
                         Object.assign(remotePlayers[data.id], {
                             x: data.x, y: data.y,
@@ -354,18 +350,78 @@
                         });
                     }
                 } else if (data.type === 'worldState') {
-                    console.log('📥 Recebendo estado do mundo...');
-                    if (data.map && Array.isArray(data.map)) map = data.map;
-                    if (data.crops) crops = data.crops;
-                    if (data.buildings && Array.isArray(data.buildings)) buildings = data.buildings;
+                    console.log('📥 RECEBENDO MUNDO DO HOST...');
+                    
+                    // ATUALIZA O MUNDO COMPLETO
+                    if (data.map && Array.isArray(data.map)) {
+                        map = data.map;
+                        console.log('✅ Mapa recebido:', map.length, 'x', map[0]?.length);
+                    }
+                    if (data.crops) {
+                        crops = data.crops;
+                        console.log('✅ Culturas recebidas:', Object.keys(crops).length);
+                    }
+                    if (data.buildings && Array.isArray(data.buildings)) {
+                        buildings = data.buildings;
+                        console.log('✅ Construções recebidas:', buildings.length);
+                    }
                     if (data.wildAnimals && Array.isArray(data.wildAnimals)) {
                         wildAnimals = data.wildAnimals.map(a => createAnimal(a.species, a.x, a.y));
+                        // Atualizar estágios
+                        wildAnimals.forEach((a, i) => {
+                            if (data.wildAnimals[i]) {
+                                a.stage = data.wildAnimals[i].stage || 0;
+                                a.name = data.wildAnimals[i].name || a.name;
+                                a.feedCount = data.wildAnimals[i].feedCount || 0;
+                            }
+                        });
+                        console.log('✅ Animais recebidos:', wildAnimals.length);
                     }
                     if (data.roomCode && !isHost) {
                         roomId = data.roomCode;
-                        multiplayerStatus.textContent = '🔗 Convidado - ' + roomId;
                     }
-                    if (data.hostName) showNotification('🌍 Mundo de ' + data.hostName + ' carregado!');
+                    
+                    // POSICIONAR O GUEST PERTO DO HOST
+                    if (!isHost && typeof player !== 'undefined') {
+                        const spawnX = (data.hostTileX !== undefined) ? data.hostTileX + 2 : 27;
+                        const spawnY = (data.hostTileY !== undefined) ? data.hostTileY : 20;
+                        
+                        // Garantir que a posição seja válida
+                        let validSpawn = false;
+                        for (let dy = 0; dy < 5 && !validSpawn; dy++) {
+                            for (let dx = -3; dx <= 3 && !validSpawn; dx++) {
+                                const checkX = spawnX + dx;
+                                const checkY = spawnY + dy;
+                                if (checkX >= 0 && checkX < MAP_W && checkY >= 0 && checkY < MAP_H) {
+                                    if (map[checkY] && map[checkY][checkX] !== TILE_RIVER) {
+                                        player.tileX = checkX;
+                                        player.tileY = checkY;
+                                        player.x = tileCenterX(checkX);
+                                        player.y = tileCenterY(checkY);
+                                        player.destX = player.x;
+                                        player.destY = player.y;
+                                        validSpawn = true;
+                                        console.log('📍 Guest spawnado em:', checkX, checkY);
+                                    }
+                                }
+                            }
+                        }
+                        if (!validSpawn) {
+                            player.tileX = spawnX;
+                            player.tileY = spawnY;
+                            player.x = tileCenterX(spawnX);
+                            player.y = tileCenterY(spawnY);
+                        }
+                    }
+                    
+                    worldReady = true;
+                    if (data.hostName) showNotification('🌍 Mundo de ' + data.hostName + ' carregado! Você spawnou perto dele!');
+                    multiplayerStatus.textContent = '🔗 Convidado - 🟢 Mundo sincronizado!';
+                    multiplayerStatus.style.color = '#7cfc00';
+                    
+                    // Limpar pending
+                    pendingWorldState = null;
+                    
                 } else if (data.type === 'action') {
                     handleRemoteAction(data);
                 }
@@ -375,16 +431,13 @@
         });
         
         conn.on('close', () => {
-            console.log('🔌 Conexão fechada');
-            showNotification('🔌 Conexão perdida.');
+            showNotification('🔌 Jogador desconectou.');
             multiplayerStatus.textContent = '⚫ Desconectado';
             multiplayerStatus.style.color = '#888';
             conn = null;
         });
         
-        conn.on('error', (err) => {
-            console.error('Erro na conexão:', err);
-        });
+        conn.on('error', (err) => console.error('Erro na conexão:', err));
     }
 
     function broadcastPosition() {
@@ -472,7 +525,7 @@
                 return `<div class="friend-row">
                     <span>🧑‍🌾 ${f.name}</span>
                     <span class="${Math.random() > 0.5 ? 'online' : 'offline'}">${Math.random() > 0.5 ? '🟢 Online' : '⚫ Offline'}</span>
-                    ${hasRoom ? `<button class="invite-btn" data-invite="${f.name}" title="Convidar para o mundo">📨</button>` : ''}
+                    ${hasRoom ? `<button class="invite-btn" data-invite="${f.name}" title="Convidar">📨</button>` : ''}
                     <button class="btn" style="font-size:6px;padding:4px 6px;" data-remove="${f.name}">✖</button>
                 </div>`;
             }).join(''); 
@@ -484,20 +537,14 @@
             }); 
         });
         list.querySelectorAll('[data-invite]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const friendName = e.target.getAttribute('data-invite');
-                inviteFriend(friendName);
-            });
+            btn.addEventListener('click', (e) => inviteFriend(e.target.getAttribute('data-invite')));
         });
     }
 
     function inviteFriend(friendName) {
-        if (!roomId || !isHost) {
-            showNotification('❌ Você precisa ser o host de uma sala!');
-            return;
-        }
+        if (!roomId || !isHost) { showNotification('❌ Você precisa ser o host!'); return; }
         copyRoomCode();
-        showNotification('📨 Convite enviado para ' + friendName + '! Código: ' + roomId);
+        showNotification('📨 Convite para ' + friendName + '! Código: ' + roomId);
         document.getElementById('friends-modal').style.display = 'none';
         const invites = JSON.parse(localStorage.getItem('codegarden_invites_' + friendName) || '[]');
         if (!invites.find(i => i.from === playerName && i.roomId === roomId)) {
@@ -510,8 +557,7 @@
         const invites = JSON.parse(localStorage.getItem('codegarden_invites_' + playerName) || '[]');
         if (invites.length > 0) {
             const recentInvite = invites[invites.length - 1];
-            const timeSinceInvite = Date.now() - recentInvite.time;
-            if (timeSinceInvite < 5 * 60 * 1000) {
+            if (Date.now() - recentInvite.time < 5 * 60 * 1000) {
                 showNotification('📨 Convite de ' + recentInvite.from + '! Sala: ' + recentInvite.roomId);
             }
             localStorage.setItem('codegarden_invites_' + playerName, '[]');
@@ -563,6 +609,7 @@
         const SPECIES_NAMES = { cow: 'vaca', pig: 'porco', duck: 'pato', rabbit: 'coelho', chicken: 'galinha', sheep: 'ovelha' };
         const farmHouse = { x: 22, y: 16, w: 3, h: 2 };
         let timeOffset = 0, playerCoins = 0, playerWater = MAX_WATER, hasWateringCan = false, hasBoots = false;
+        // MAPA VAZIO para guest (será preenchido pelo worldState)
         let map = Array(MAP_H).fill().map(() => Array(MAP_W).fill(TILE_GRASS));
         let crops = {}, fruitTreeTimers = {};
         let player = { tileX: 25, tileY: 20, x: 25.5, y: 20.5, moving: false, movePath: [], moveStartTime: 0, moveStartX: 25.5, moveStartY: 20.5, moveTargetX: 25.5, moveTargetY: 20.5, actionOnArrival: false, dir: 'front' };
@@ -646,9 +693,20 @@
         document.getElementById('close-shop').addEventListener('click', () => document.getElementById('shop-modal').style.display = 'none');
         bindShopButtons();
 
+        // ========== INICIALIZAÇÃO CONDICIONAL ==========
+        // Só gera mapa aleatório se for HOST ou SOLO
+        // Guest recebe o mapa do host via worldState
+        if (isHost || !roomId) {
+            initializeMap();
+            worldReady = true;
+        } else {
+            // Guest: mantém o mapa vazio (será preenchido pelo worldState)
+            worldReady = false;
+            showNotification('🟡 Aguardando mundo do host...');
+        }
+
         function initializeMap() { for (let y = 0; y < MAP_H; y++) for (let x = 0; x < MAP_W; x++) map[y][x] = TILE_GRASS; for (let r = 0; r < 2; r++) { let cx = 10 + Math.floor(Math.random() * (MAP_W - 20)), cy = 0; while (cy < MAP_H) { if (!(cx >= farmHouse.x && cx < farmHouse.x + farmHouse.w && cy >= farmHouse.y && cy < farmHouse.y + farmHouse.h)) { map[cy][cx] = TILE_RIVER; if (Math.random() < 0.2 && cx + 1 < MAP_W) map[cy][cx + 1] = TILE_RIVER; } cx += Math.floor(Math.random() * 3) - 1; cy += 1; cx = Math.max(1, Math.min(MAP_W - 2, cx)); } } for (let i = 0; i < 18; i++) { let cx = Math.floor(Math.random() * MAP_W), cy = Math.floor(Math.random() * MAP_H); for (let j = 0; j < 10; j++) { let tx = cx + Math.floor(Math.random() * 6 - 3), ty = cy + Math.floor(Math.random() * 6 - 3); if (tx >= 0 && tx < MAP_W && ty >= 0 && ty < MAP_H && map[ty][tx] === TILE_GRASS && !(tx >= farmHouse.x && tx < farmHouse.x + farmHouse.w && ty >= farmHouse.y && ty < farmHouse.y + farmHouse.h) && Math.random() < 0.4) map[ty][tx] = TILE_TREE; } } for (let i = 0; i < 25; i++) { let cx = Math.floor(Math.random() * MAP_W), cy = Math.floor(Math.random() * MAP_H); for (let j = 0; j < 4; j++) { let bx = cx + Math.floor(Math.random() * 4 - 2), by = cy + Math.floor(Math.random() * 4 - 2); if (bx >= 0 && bx < MAP_W && by >= 0 && by < MAP_H && map[by][bx] === TILE_GRASS) map[by][bx] = TILE_BUSH; } } for (let i = 0; i < 12; i++) { let fx = Math.floor(Math.random() * MAP_W), fy = Math.floor(Math.random() * MAP_H); if (map[fy][fx] === TILE_GRASS) { map[fy][fx] = TILE_FRUIT_TREE; fruitTreeTimers[`${fx},${fy}`] = 0; } } const initSpec = ['chicken','chicken','cow','pig','duck','rabbit','sheep','chicken','duck','rabbit']; initSpec.forEach(spec => { let ax, ay; do { ax = Math.floor(Math.random() * MAP_W); ay = Math.floor(Math.random() * MAP_H); } while (!isWalkable(ax, ay) || map[ay][ax] !== TILE_GRASS); wildAnimals.push(createAnimal(spec, ax + 0.5, ay + 0.5)); }); }
         function createAnimal(species, x, y) { return { x, y, targetX: x, targetY: y, species, name: SPECIES_NAMES[species], type: SPECIES_EMOJIS[species], speed: SPECIES_SPEEDS[species] || 0.02, dir: 'front', isInteracting: false, isLeashed: false, fed: false, timer: Math.random() * 100, stage: 0, growthStart: Date.now(), promptTimer: 0, feedCount: 0 }; }
-        initializeMap();
 
         function isWalkable(tx, ty) { if (tx < 0 || tx >= MAP_W || ty < 0 || ty >= MAP_H) return false; const tile = map[ty][tx]; if (tile === TILE_FENCE) return false; if (selectedTool === 'boots' && tile === TILE_RIVER) return true; if (tile === TILE_LAMPPOST || tile === TILE_WELL || tile === TILE_TILLED) return true; const inHouse = tx >= farmHouse.x && tx < farmHouse.x + farmHouse.w && ty >= farmHouse.y && ty < farmHouse.y + farmHouse.h; if (inHouse) return true; return tile !== TILE_RIVER; }
         function canAnimalMoveTo(animal, nx, ny) { const tx = Math.floor(nx), ty = Math.floor(ny); if (tx < 0 || tx >= MAP_W || ty < 0 || ty >= MAP_H) return false; const tile = map[ty][tx]; if (tile === TILE_FENCE) return false; if (tile === TILE_RIVER && animal.species !== 'duck') return false; return true; }
