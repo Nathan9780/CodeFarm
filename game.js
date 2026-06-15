@@ -1,4 +1,5 @@
 (function () {
+  // ========== VARIÁVEIS GLOBAIS DO JOGO ==========
   let playerName = "";
   let gameLoopId = null;
   let peer = null;
@@ -8,12 +9,13 @@
   let myPeerId = null;
   let roomId = "";
   let connectionRetries = 0;
-  const MAX_RETRIES = 20;
+  const MAX_RETRIES = 15;
   let worldReceived = false;
-  let gameInitialized = false;
+  let gameRunning = false;
   let hostReady = false;
   let guestReady = false;
 
+  // Elementos DOM
   const loginScreen = document.getElementById("login-screen");
   const lobbyScreen = document.getElementById("lobby-screen");
   const roomDisplay = document.getElementById("room-display");
@@ -77,14 +79,14 @@
         ? guestReady
           ? "🚀 Iniciando..."
           : "Aguardando convidado..."
-        : "Clique PRONTO quando estiver pronto";
+        : "Clique PRONTO";
     } else {
       players.innerHTML = `🧑‍🌾 <span style="color:#7cfc00;">Host</span> ${hostReady ? "✅" : "⌛"}<br>👤 <span style="color:#ffa500;">Você</span> ${guestReady ? "✅" : "⌛"}`;
       status.textContent = guestReady
         ? hostReady
           ? "🚀 Iniciando..."
           : "Aguardando host..."
-        : "Clique PRONTO quando estiver pronto";
+        : "Clique PRONTO";
     }
   }
   function showReadyLobby() {
@@ -141,7 +143,7 @@
   function hideLobby() {
     lobbyScreen.style.display = "none";
   }
-  function showGame() {
+  function showGameUI() {
     document
       .querySelectorAll("#gameCanvas, #hud, #top-bar, #hotbar, #command-box")
       .forEach((el) => {
@@ -154,7 +156,7 @@
       });
     showRoomCodeInGame();
   }
-  function hideGame() {
+  function hideGameUI() {
     document
       .querySelectorAll(
         "#gameCanvas, #hud, #top-bar, #hotbar, #command-box, #hint-bubble, #notification, #levelup-modal, #shop-modal, #editor-modal, #friends-modal, #water-bar-container",
@@ -169,6 +171,7 @@
     if (gameLoopId) {
       cancelAnimationFrame(gameLoopId);
       gameLoopId = null;
+      gameRunning = false;
     }
     if (conn)
       try {
@@ -179,7 +182,7 @@
         peer.destroy();
       } catch (e) {}
     localStorage.removeItem("codegarden_username");
-    hideGame();
+    hideGameUI();
     hideReadyLobby();
     loginScreen.style.display = "flex";
     lobbyScreen.style.display = "none";
@@ -194,7 +197,6 @@
     remotePlayers = {};
     connectionRetries = 0;
     worldReceived = false;
-    gameInitialized = false;
     hostReady = false;
     guestReady = false;
     hideRoomCodeInGame();
@@ -216,7 +218,6 @@
   function initMultiplayer() {
     const roomInput = document.getElementById("room-id-input");
     const lobbyInfo = document.getElementById("lobby-info");
-
     document.getElementById("host-btn").addEventListener("click", () => {
       roomId =
         roomInput.value.trim() ||
@@ -229,7 +230,6 @@
       showNotification("🏠 Sala: " + roomId);
       startConnection(roomId);
     });
-
     document.getElementById("join-btn").addEventListener("click", () => {
       roomId = roomInput.value.trim();
       if (!roomId) {
@@ -241,21 +241,19 @@
       lobbyInfo.textContent = "Conectando...";
       startConnection(roomId);
     });
-
     document.getElementById("solo-btn").addEventListener("click", () => {
       roomId = "";
       isHost = false;
       worldReceived = true;
-      gameInitialized = true;
       hideLobby();
-      showGame();
-      startGame();
+      showGameUI();
+      initGameWorld(true);
     });
   }
 
   function startConnection(room) {
     hideLobby();
-    showGame();
+    showGameUI();
     multiplayerStatus.style.display = "block";
     multiplayerStatus.textContent = "🟡 Conectando...";
     multiplayerStatus.style.color = "#ffa500";
@@ -276,6 +274,9 @@
 
     console.log("🆔 Meu ID:", myId, isHost ? "(HOST)" : "(GUEST)");
 
+    // Inicia o jogo imediatamente
+    initGameWorld(isHost);
+
     peer = new Peer(myId, {
       debug: 1,
       config: { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] },
@@ -286,7 +287,6 @@
       console.log("✅ Peer aberto:", id);
       multiplayerStatus.textContent = isHost ? "🏠 Host" : "🔗 Convidado";
       multiplayerStatus.style.color = "#7cfc00";
-
       if (isHost) {
         showNotification("🏠 Aguardando convidado...");
         showRoomCodeInGame();
@@ -342,20 +342,17 @@
     connectionRetries++;
     console.log(`🔍 Tentativa ${connectionRetries}/${MAX_RETRIES}: ${hostId}`);
     multiplayerStatus.textContent = `🔗 Buscando... (${connectionRetries}/${MAX_RETRIES})`;
-
     if (connectionRetries > MAX_RETRIES) {
       multiplayerStatus.textContent = "❌ Host não encontrado";
       showNotification("❌ Sala não encontrada.");
       return;
     }
-
     const c = peer.connect(hostId, {
       reliable: true,
       metadata: { name: playerName },
     });
     let done = false;
     const timeout = 6000;
-
     c.on("open", () => {
       if (!done) {
         done = true;
@@ -392,17 +389,17 @@
       setTimeout(() => sendWorldState(), 500);
       return;
     }
-    if (typeof map === "undefined" || typeof player === "undefined") {
+    if (typeof gameMap === "undefined" || typeof gamePlayer === "undefined") {
       setTimeout(() => sendWorldState(), 300);
       return;
     }
     try {
       conn.send({
         type: "worldState",
-        map: map,
-        crops: crops,
-        buildings: buildings,
-        wildAnimals: wildAnimals.map((a) => ({
+        map: gameMap,
+        crops: gameCrops,
+        buildings: gameBuildings,
+        wildAnimals: gameWildAnimals.map((a) => ({
           x: a.x,
           y: a.y,
           species: a.species,
@@ -413,23 +410,21 @@
         })),
         hostName: playerName,
         roomCode: roomId,
-        hostTileX: player.tileX,
-        hostTileY: player.tileY,
-        hostX: player.x,
-        hostY: player.y,
-        timeOffset: timeOffset,
-        playerCoins: playerCoins,
-        playerWater: playerWater,
-        hasWateringCan: hasWateringCan,
-        hasBoots: hasBoots,
-        playerXP: playerXP,
-        playerLevel: playerLevel,
-        unlockedItems: unlockedItems,
+        hostTileX: gamePlayer.tileX,
+        hostTileY: gamePlayer.tileY,
+        hostX: gamePlayer.x,
+        hostY: gamePlayer.y,
+        timeOffset: gameTimeOffset,
+        playerCoins: gamePlayerCoins,
+        playerWater: gamePlayerWater,
+        hasWateringCan: gameHasWateringCan,
+        hasBoots: gameHasBoots,
+        playerXP: gamePlayerXP,
+        playerLevel: gamePlayerLevel,
+        unlockedItems: gameUnlockedItems,
       });
-      console.log("📤 Mundo enviado ao guest.");
-    } catch (e) {
-      console.error("Erro ao enviar mundo:", e);
-    }
+      console.log("📤 Mundo enviado.");
+    } catch (e) {}
   }
 
   function setupDataChannel(c) {
@@ -469,28 +464,31 @@
         } else if (data.type === "worldState" && !isHost) {
           console.log("📥 RECEBENDO MUNDO...");
           if (data.map && Array.isArray(data.map) && data.map.length > 0)
-            map = data.map.map((row) => [...row]);
-          if (data.crops) crops = JSON.parse(JSON.stringify(data.crops));
+            gameMap = data.map.map((row) => [...row]);
+          if (data.crops) gameCrops = JSON.parse(JSON.stringify(data.crops));
           if (data.buildings)
-            buildings = JSON.parse(JSON.stringify(data.buildings));
+            gameBuildings = JSON.parse(JSON.stringify(data.buildings));
           if (data.wildAnimals)
-            wildAnimals = data.wildAnimals.map((a) => {
-              const animal = createAnimal(a.species, a.x, a.y);
+            gameWildAnimals = data.wildAnimals.map((a) => {
+              const animal = createGameAnimal(a.species, a.x, a.y);
               animal.stage = a.stage || 0;
               animal.name = a.name || animal.name;
               animal.feedCount = a.feedCount || 0;
               animal.isLeashed = a.isLeashed || false;
               return animal;
             });
-          if (data.timeOffset !== undefined) timeOffset = data.timeOffset;
-          if (data.playerXP !== undefined) playerXP = data.playerXP;
-          if (data.playerLevel !== undefined) playerLevel = data.playerLevel;
-          if (data.playerCoins !== undefined) playerCoins = data.playerCoins;
+          if (data.timeOffset !== undefined) gameTimeOffset = data.timeOffset;
+          if (data.playerXP !== undefined) gamePlayerXP = data.playerXP;
+          if (data.playerLevel !== undefined)
+            gamePlayerLevel = data.playerLevel;
+          if (data.playerCoins !== undefined)
+            gamePlayerCoins = data.playerCoins;
           if (data.hasWateringCan !== undefined)
-            hasWateringCan = data.hasWateringCan;
-          if (data.hasBoots !== undefined) hasBoots = data.hasBoots;
-          if (data.unlockedItems) unlockedItems = [...data.unlockedItems];
-          if (data.playerWater !== undefined) playerWater = data.playerWater;
+            gameHasWateringCan = data.hasWateringCan;
+          if (data.hasBoots !== undefined) gameHasBoots = data.hasBoots;
+          if (data.unlockedItems) gameUnlockedItems = [...data.unlockedItems];
+          if (data.playerWater !== undefined)
+            gamePlayerWater = data.playerWater;
           const hx = data.hostTileX || 25,
             hy = data.hostTileY || 20;
           let placed = false;
@@ -503,41 +501,35 @@
                 cx < MAP_W &&
                 cy >= 0 &&
                 cy < MAP_H &&
-                map[cy] &&
-                map[cy][cx] !== TILE_RIVER &&
-                map[cy][cx] !== TILE_FENCE
+                gameMap[cy] &&
+                gameMap[cy][cx] !== TILE_RIVER &&
+                gameMap[cy][cx] !== TILE_FENCE
               ) {
-                player.tileX = cx;
-                player.tileY = cy;
-                player.x = cx + 0.5;
-                player.y = cy + 0.5;
-                player.destX = player.x;
-                player.destY = player.y;
+                gamePlayer.tileX = cx;
+                gamePlayer.tileY = cy;
+                gamePlayer.x = cx + 0.5;
+                gamePlayer.y = cy + 0.5;
+                gamePlayer.destX = gamePlayer.x;
+                gamePlayer.destY = gamePlayer.y;
                 placed = true;
               }
             }
           if (!placed) {
-            player.tileX = Math.min(hx + 2, MAP_W - 2);
-            player.tileY = Math.min(hy, MAP_H - 2);
-            player.x = player.tileX + 0.5;
-            player.y = player.tileY + 0.5;
+            gamePlayer.tileX = Math.min(hx + 2, MAP_W - 2);
+            gamePlayer.tileY = Math.min(hy, MAP_H - 2);
+            gamePlayer.x = gamePlayer.tileX + 0.5;
+            gamePlayer.y = gamePlayer.tileY + 0.5;
           }
           worldReceived = true;
-          updateWaterBar();
-          updateHotbar();
-          updateShopUI();
+          updateGameWaterBar();
+          updateGameHotbar();
+          updateGameShopUI();
           document.getElementById("xpDisplay").textContent =
-            `⭐ Nv.${playerLevel} | XP: ${playerXP}/${playerLevel * XP_PER_LEVEL} 💰${playerCoins}`;
+            `⭐ Nv.${gamePlayerLevel} | XP: ${gamePlayerXP}/${gamePlayerLevel * XP_PER_LEVEL} 💰${gamePlayerCoins}`;
           multiplayerStatus.textContent =
             "🔗 Convidado - 🟢 Mundo sincronizado!";
           showNotification("🌍 Mundo carregado!");
-          console.log("✅ Sincronização completa!");
           hideReadyLobby();
-          if (!gameInitialized) {
-            gameInitialized = true;
-            startGame();
-          }
-          setTimeout(() => broadcastPosition(), 300);
         } else if (data.type === "action") {
           handleRemoteAction(data);
         }
@@ -552,15 +544,15 @@
   }
 
   function broadcastPosition() {
-    if (conn && conn.open && typeof player !== "undefined") {
+    if (conn && conn.open && typeof gamePlayer !== "undefined") {
       try {
         conn.send({
           type: "position",
           id: myPeerId,
-          x: player.x,
-          y: player.y,
-          tileX: player.tileX,
-          tileY: player.tileY,
+          x: gamePlayer.x,
+          y: gamePlayer.y,
+          tileX: gamePlayer.tileX,
+          tileY: gamePlayer.tileY,
           name: playerName,
         });
       } catch (e) {}
@@ -573,30 +565,30 @@
       } catch (e) {}
   }
   function handleRemoteAction(data) {
-    if (typeof map === "undefined" || !worldReceived) return;
+    if (typeof gameMap === "undefined" || !worldReceived) return;
     try {
-      if (data.action === "till") map[data.tileY][data.tileX] = TILE_TILLED;
+      if (data.action === "till") gameMap[data.tileY][data.tileX] = TILE_TILLED;
       else if (data.action === "plant")
-        crops[`${data.tileX},${data.tileY}`] = {
+        gameCrops[`${data.tileX},${data.tileY}`] = {
           type: data.cropType,
           timer: 0,
           ready: false,
           growTime: Object.values(CROP_GROW_TIMES)[data.cropType],
         };
       else if (data.action === "harvest")
-        delete crops[`${data.tileX},${data.tileY}`];
+        delete gameCrops[`${data.tileX},${data.tileY}`];
       else if (data.action === "water") {
-        if (crops[`${data.tileX},${data.tileY}`])
-          crops[`${data.tileX},${data.tileY}`].timer += 30;
+        if (gameCrops[`${data.tileX},${data.tileY}`])
+          gameCrops[`${data.tileX},${data.tileY}`].timer += 30;
       } else if (data.action === "placeBuilding") {
         if (data.buildingType === "fence")
-          map[data.tileY][data.tileX] = TILE_FENCE;
+          gameMap[data.tileY][data.tileX] = TILE_FENCE;
         else if (data.buildingType === "lamppost")
-          map[data.tileY][data.tileX] = TILE_LAMPPOST;
+          gameMap[data.tileY][data.tileX] = TILE_LAMPPOST;
         else if (data.buildingType === "well")
-          map[data.tileY][data.tileX] = TILE_WELL;
+          gameMap[data.tileY][data.tileX] = TILE_WELL;
         else
-          buildings.push({
+          gameBuildings.push({
             x: data.tileX,
             y: data.tileY,
             type: data.buildingType,
@@ -726,556 +718,159 @@
     showNotification("👥 " + n + " adicionado!");
   });
 
-  function startGame() {
-    if (!gameInitialized) {
-      gameInitialized = true;
-      initGame();
-    }
+  // ========== INICIALIZAÇÃO DO MUNDO DO JOGO ==========
+  const canvas = document.getElementById("gameCanvas");
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+
+  const MAP_W = 50,
+    MAP_H = 40;
+  const TILE_GRASS = 0,
+    TILE_TILLED = 11,
+    TILE_TREE = 5,
+    TILE_RIVER = 6,
+    TILE_FRUIT_TREE = 7,
+    TILE_BUSH = 8,
+    TILE_FENCE = 9,
+    TILE_LAMPPOST = 10,
+    TILE_WELL = 12;
+  const BUILD_TIME = 10000;
+  const MINUTE_MS = 60 * 1000,
+    CYCLE_TOTAL = 60 * MINUTE_MS;
+  const MOVE_DURATION = 120,
+    PLAYER_SPEED = 0.12,
+    XP_PER_LEVEL = 100;
+  const GROWTH_STAGE1 = 15 * MINUTE_MS,
+    GROWTH_STAGE2 = 45 * MINUTE_MS;
+  const MAX_WATER = 10;
+  let TILE_SIZE = 48;
+  const SPECIES_SPEEDS = {
+    cow: 0.008,
+    pig: 0.015,
+    duck: 0.015,
+    rabbit: 0.03,
+    chicken: 0.012,
+    sheep: 0.01,
+  };
+  const SPECIES_EMOJIS = {
+    cow: "🐄",
+    pig: "🐖",
+    duck: "🦆",
+    rabbit: "🐇",
+    chicken: "🐔",
+    sheep: "🐑",
+  };
+  const SPECIES_NAMES = {
+    cow: "vaca",
+    pig: "porco",
+    duck: "pato",
+    rabbit: "coelho",
+    chicken: "galinha",
+    sheep: "ovelha",
+  };
+  const farmHouse = { x: 22, y: 16, w: 3, h: 2 };
+  const CROP_NAMES = {
+    wheat: "Trigo",
+    corn: "Milho",
+    carrot: "Cenoura",
+    tomato: "Tomate",
+  };
+  const CROP_EMOJIS = { wheat: "🌾", corn: "🌽", carrot: "🥕", tomato: "🍅" };
+  const CROP_GROW_TIMES = { wheat: 160, corn: 240, carrot: 200, tomato: 280 };
+
+  let gameMap = Array(MAP_H)
+    .fill()
+    .map(() => Array(MAP_W).fill(TILE_GRASS));
+  let gameCrops = {},
+    gameFruitTreeTimers = {};
+  let gamePlayer = {
+    tileX: 25,
+    tileY: 20,
+    x: 25.5,
+    y: 20.5,
+    moving: false,
+    movePath: [],
+    moveStartTime: 0,
+    moveStartX: 25.5,
+    moveStartY: 20.5,
+    moveTargetX: 25.5,
+    moveTargetY: 20.5,
+    actionOnArrival: false,
+    dir: "front",
+  };
+  let gameCamX = gamePlayer.x - canvas.width / TILE_SIZE / 2,
+    gameCamY = gamePlayer.y - canvas.height / TILE_SIZE / 2;
+  let gameSelectedCrop = -1,
+    gameSelectedTool = null,
+    gamePlayerXP = 0,
+    gamePlayerLevel = 1;
+  let gameWildAnimals = [],
+    gameBuildings = [],
+    gamePendingBuilding = null,
+    gamePendingAnimal = null;
+  let gameFloatingHearts = [],
+    gameTime = 0,
+    gameUnlockedItems = ["barn", "silo", "fence"];
+  let gameTimeOffset = 0,
+    gamePlayerCoins = 0,
+    gamePlayerWater = MAX_WATER,
+    gameHasWateringCan = false,
+    gameHasBoots = false;
+
+  window.CROPS = {
+    WHEAT: "wheat",
+    CORN: "corn",
+    CARROT: "carrot",
+    TOMATO: "tomato",
+  };
+  window.TOOLS = {
+    HOE: "hoe",
+    LEASH: "leash",
+    WATERING_CAN: "wateringcan",
+    BOOTS: "boots",
+  };
+  window.ANIMALS = {
+    COW: "cow",
+    CHICKEN: "chicken",
+    PIG: "pig",
+    DUCK: "duck",
+    RABBIT: "rabbit",
+    SHEEP: "sheep",
+  };
+  window.BUILDINGS = {
+    BARN: "barn",
+    SILO: "silo",
+    FENCE: "fence",
+    LAMPPOST: "lamppost",
+    WELL: "well",
+  };
+
+  function createGameAnimal(species, x, y) {
+    return {
+      x,
+      y,
+      targetX: x,
+      targetY: y,
+      species,
+      name: SPECIES_NAMES[species],
+      type: SPECIES_EMOJIS[species],
+      speed: SPECIES_SPEEDS[species] || 0.02,
+      dir: "front",
+      isInteracting: false,
+      isLeashed: false,
+      fed: false,
+      timer: Math.random() * 100,
+      stage: 0,
+      growthStart: Date.now(),
+      promptTimer: 0,
+      feedCount: 0,
+    };
   }
 
-  function initGame() {
-    const canvas = document.getElementById("gameCanvas");
-    const ctx = canvas.getContext("2d");
-    ctx.imageSmoothingEnabled = false;
-    const MAP_W = 50,
-      MAP_H = 40;
-    const TILE_GRASS = 0,
-      TILE_TILLED = 11,
-      TILE_TREE = 5,
-      TILE_RIVER = 6,
-      TILE_FRUIT_TREE = 7,
-      TILE_BUSH = 8,
-      TILE_FENCE = 9,
-      TILE_LAMPPOST = 10,
-      TILE_WELL = 12;
-    const BUILD_TIME = 10000;
-    const MINUTE_MS = 60 * 1000,
-      CYCLE_TOTAL = 60 * MINUTE_MS;
-    const MOVE_DURATION = 120,
-      PLAYER_SPEED = 0.12,
-      XP_PER_LEVEL = 100;
-    const GROWTH_STAGE1 = 15 * MINUTE_MS,
-      GROWTH_STAGE2 = 45 * MINUTE_MS;
-    const MAX_WATER = 10;
-    let TILE_SIZE = 48;
-    const SPECIES_SPEEDS = {
-      cow: 0.008,
-      pig: 0.015,
-      duck: 0.015,
-      rabbit: 0.03,
-      chicken: 0.012,
-      sheep: 0.01,
-    };
-    const SPECIES_EMOJIS = {
-      cow: "🐄",
-      pig: "🐖",
-      duck: "🦆",
-      rabbit: "🐇",
-      chicken: "🐔",
-      sheep: "🐑",
-    };
-    const SPECIES_NAMES = {
-      cow: "vaca",
-      pig: "porco",
-      duck: "pato",
-      rabbit: "coelho",
-      chicken: "galinha",
-      sheep: "ovelha",
-    };
-    const farmHouse = { x: 22, y: 16, w: 3, h: 2 };
-    let timeOffset = 0,
-      playerCoins = 0,
-      playerWater = MAX_WATER,
-      hasWateringCan = false,
-      hasBoots = false;
-    let map = Array(MAP_H)
-      .fill()
-      .map(() => Array(MAP_W).fill(TILE_GRASS));
-    let crops = {},
-      fruitTreeTimers = {};
-    let player = {
-      tileX: 25,
-      tileY: 20,
-      x: 25.5,
-      y: 20.5,
-      moving: false,
-      movePath: [],
-      moveStartTime: 0,
-      moveStartX: 25.5,
-      moveStartY: 20.5,
-      moveTargetX: 25.5,
-      moveTargetY: 20.5,
-      actionOnArrival: false,
-      dir: "front",
-    };
-    let camX = player.x - canvas.width / TILE_SIZE / 2,
-      camY = player.y - canvas.height / TILE_SIZE / 2;
-    let selectedCrop = -1,
-      selectedTool = null,
-      playerXP = 0,
-      playerLevel = 1;
-    let wildAnimals = [],
-      buildings = [],
-      pendingBuilding = null,
-      pendingAnimal = null;
-    let floatingHearts = [],
-      time = 0,
-      unlockedItems = ["barn", "silo", "fence"];
-    const CROP_NAMES = {
-      wheat: "Trigo",
-      corn: "Milho",
-      carrot: "Cenoura",
-      tomato: "Tomate",
-    };
-    const CROP_EMOJIS = { wheat: "🌾", corn: "🌽", carrot: "🥕", tomato: "🍅" };
-    const CROP_GROW_TIMES = { wheat: 160, corn: 240, carrot: 200, tomato: 280 };
+  function initGameWorld(generateMap) {
+    if (gameRunning) return;
+    gameRunning = true;
 
-    window.CROPS = {
-      WHEAT: "wheat",
-      CORN: "corn",
-      CARROT: "carrot",
-      TOMATO: "tomato",
-    };
-    window.TOOLS = {
-      HOE: "hoe",
-      LEASH: "leash",
-      WATERING_CAN: "wateringcan",
-      BOOTS: "boots",
-    };
-    window.ANIMALS = {
-      COW: "cow",
-      CHICKEN: "chicken",
-      PIG: "pig",
-      DUCK: "duck",
-      RABBIT: "rabbit",
-      SHEEP: "sheep",
-    };
-    window.BUILDINGS = {
-      BARN: "barn",
-      SILO: "silo",
-      FENCE: "fence",
-      LAMPPOST: "lamppost",
-      WELL: "well",
-    };
-
-    window.farm = {
-      soil: {
-        till: () => {
-          if (selectedTool !== "hoe") {
-            showNotification("❌ Equipe TOOLS.HOE");
-            return false;
-          }
-          const x = player.tileX,
-            y = player.tileY;
-          if (map[y][x] === TILE_GRASS) {
-            map[y][x] = TILE_TILLED;
-            showNotification("⛏️ Terra arada!");
-            broadcastAction({ action: "till", tileX: x, tileY: y });
-            return true;
-          }
-          showNotification("❌ Só grama.");
-          return false;
-        },
-        isTilled: () =>
-          map[player.tileY] && map[player.tileY][player.tileX] === TILE_TILLED,
-      },
-      crops: {
-        plant: (crop) => {
-          const x = player.tileX,
-            y = player.tileY;
-          if (map[y][x] !== TILE_TILLED) {
-            showNotification("❌ Are primeiro.");
-            return false;
-          }
-          if (crops[`${x},${y}`]) {
-            showNotification("❌ Já tem planta.");
-            return false;
-          }
-          const ci = Object.keys(CROP_NAMES).indexOf(crop);
-          if (ci === -1) {
-            showNotification("❌ Use CROPS.WHEAT etc.");
-            return false;
-          }
-          selectedCrop = ci;
-          selectedTool = null;
-          updateHotbar();
-          crops[`${x},${y}`] = {
-            type: ci,
-            timer: 0,
-            ready: false,
-            growTime: Object.values(CROP_GROW_TIMES)[ci],
-          };
-          showNotification(`🌱 Plantou ${CROP_NAMES[crop]}!`);
-          broadcastAction({
-            action: "plant",
-            tileX: x,
-            tileY: y,
-            cropType: ci,
-          });
-          return true;
-        },
-        water: () => {
-          if (!hasWateringCan) {
-            showNotification("❌ Regador Nv.3");
-            return false;
-          }
-          if (playerWater <= 0) {
-            showNotification("💧 Vazio!");
-            return false;
-          }
-          const x = player.tileX,
-            y = player.tileY,
-            k = `${x},${y}`;
-          if (crops[k] && !crops[k].ready) {
-            crops[k].timer += 30;
-            playerWater--;
-            updateWaterBar();
-            showNotification("💦 Regou!");
-            broadcastAction({ action: "water", tileX: x, tileY: y });
-            return true;
-          }
-          showNotification("❌ Nada para regar.");
-          return false;
-        },
-        harvest: () => {
-          const x = player.tileX,
-            y = player.tileY,
-            k = `${x},${y}`;
-          if (crops[k] && crops[k].ready) {
-            playerXP += 20;
-            updateLevel();
-            delete crops[k];
-            playerCoins += 10;
-            showNotification("🌾 Colheu! +20 XP");
-            broadcastAction({ action: "harvest", tileX: x, tileY: y });
-            return true;
-          }
-          if (map[y][x] === TILE_FRUIT_TREE && fruitTreeTimers[k] >= 300) {
-            playerXP += 50;
-            updateLevel();
-            fruitTreeTimers[k] = 0;
-            playerCoins += 25;
-            showNotification("🍎 Frutas! +50 XP");
-            return "fruit";
-          }
-          showNotification("❌ Nada pronto.");
-          return false;
-        },
-        isReady: () => {
-          const k = `${player.tileX},${player.tileY}`;
-          return crops[k] && crops[k].ready;
-        },
-      },
-      animals: {
-        feed: (name) => {
-          const n = wildAnimals.find(
-            (a) =>
-              a.name === name &&
-              Math.hypot(player.x - a.x, player.y - a.y) < 1.5,
-          );
-          if (!n) {
-            showNotification("❌ Animal não encontrado.");
-            return false;
-          }
-          playerXP += 30;
-          updateLevel();
-          n.fed = true;
-          n.feedCount++;
-          spawnHearts(n.x, n.y, 4);
-          showNotification(`🐾 ${n.name} alimentado! +30 XP`);
-          if (n.feedCount >= 2 && n.stage < 2) {
-            n.stage++;
-            n.feedCount = 0;
-            n.growthStart =
-              Date.now() - (n.stage === 1 ? GROWTH_STAGE1 : GROWTH_STAGE2);
-            showNotification(`🌟 ${n.name} cresceu!`);
-            spawnHearts(n.x, n.y, 10);
-          }
-          return true;
-        },
-        lead: () => {
-          const n = getNearestAnimal();
-          if (n && Math.hypot(player.x - n.x, player.y - n.y) < 1.5) {
-            n.isLeashed = true;
-            showNotification(`🔗 ${n.name} preso!`);
-            return n.name;
-          }
-          return false;
-        },
-        release: () => {
-          let f = false;
-          wildAnimals.forEach((a) => {
-            if (a.isLeashed) {
-              a.isLeashed = false;
-              a.targetX = a.x;
-              a.targetY = a.y;
-              f = true;
-            }
-          });
-          showNotification(f ? "🔓 Solto!" : "❌ Nenhum preso.");
-          return f;
-        },
-        collect: () => {
-          const n = getNearestAnimal();
-          if (
-            n &&
-            n.stage === 2 &&
-            Math.hypot(player.x - n.x, player.y - n.y) < 1.5
-          ) {
-            playerXP += 60;
-            updateLevel();
-            playerCoins += 30;
-            showNotification("🥚 +60 XP +30💰");
-            spawnHearts(n.x, n.y, 5);
-            return n.name;
-          }
-          return false;
-        },
-        getNearest: () => {
-          const n = getNearestAnimal();
-          return n ? { name: n.name, stage: n.stage } : null;
-        },
-      },
-      buildings: {
-        place: () => {
-          if (!pendingBuilding) {
-            showNotification("❌ Compre algo.");
-            return false;
-          }
-          const tx = player.tileX,
-            ty = player.tileY;
-          if (
-            !isWalkable(tx, ty) ||
-            (map[ty][tx] !== TILE_GRASS && map[ty][tx] !== TILE_TILLED)
-          ) {
-            showNotification("❌ Local inválido.");
-            return false;
-          }
-          const type = pendingBuilding.type;
-          if (type === "fence") map[ty][tx] = TILE_FENCE;
-          else if (type === "lamppost") map[ty][tx] = TILE_LAMPPOST;
-          else if (type === "well") map[ty][tx] = TILE_WELL;
-          else
-            buildings.push({
-              x: tx,
-              y: ty,
-              type,
-              startTime: Date.now(),
-              progress: 0,
-              isReady: false,
-            });
-          showNotification(`✅ ${type} colocado!`);
-          broadcastAction({
-            action: "placeBuilding",
-            tileX: tx,
-            tileY: ty,
-            buildingType: type,
-          });
-          pendingBuilding = null;
-          return true;
-        },
-        use: () => {
-          const b = getNearestBuilding();
-          if (b && b.isReady) {
-            playerXP += 40;
-            updateLevel();
-            playerCoins += 20;
-            showNotification("🏠 +40 XP +20💰");
-            return b.type;
-          }
-          return false;
-        },
-        destroy: () => {
-          const b = getNearestBuilding();
-          if (b) {
-            buildings = buildings.filter((i) => i !== b);
-            showNotification("💥 Removida!");
-            return b.type;
-          }
-          return false;
-        },
-      },
-      tools: {
-        equip: (tool) => {
-          if (tool === "hoe") {
-            selectedTool = "hoe";
-            selectedCrop = -1;
-            updateHotbar();
-            return true;
-          }
-          if (tool === "leash") {
-            selectedTool = "leash";
-            selectedCrop = -1;
-            updateHotbar();
-            return true;
-          }
-          if (tool === "wateringcan") {
-            if (!hasWateringCan) {
-              showNotification("🔒 Nv.3");
-              return false;
-            }
-            selectedTool = "wateringcan";
-            selectedCrop = -1;
-            updateHotbar();
-            return true;
-          }
-          if (tool === "boots") {
-            if (!hasBoots) {
-              showNotification("🔒 Nv.4");
-              return false;
-            }
-            selectedTool = "boots";
-            selectedCrop = -1;
-            updateHotbar();
-            return true;
-          }
-          return false;
-        },
-        getWater: () => {
-          const nw =
-            map[player.tileY] && map[player.tileY][player.tileX] === TILE_WELL;
-          const nwb = buildings.some(
-            (b) =>
-              b.type === "well" &&
-              Math.hypot(player.x - (b.x + 0.5), player.y - (b.y + 0.5)) < 1.5,
-          );
-          if (nw || nwb) {
-            playerWater = MAX_WATER;
-            updateWaterBar();
-            showNotification("💧 Cheio!");
-            return true;
-          }
-          return false;
-        },
-      },
-      shop: {
-        buy: (item) => {
-          if (["barn", "silo", "fence", "lamppost", "well"].includes(item)) {
-            if (item === "lamppost" && playerLevel < 2) {
-              showNotification("🔒 Nv.2");
-              return false;
-            }
-            if (item === "well" && playerLevel < 3) {
-              showNotification("🔒 Nv.3");
-              return false;
-            }
-            pendingBuilding = { type: item };
-            showNotification(`🏗️ ${item} comprado! farm.buildings.place()`);
-            return true;
-          }
-          if (item === "boots") {
-            if (playerLevel < 4) {
-              showNotification("🔒 Nv.4");
-              return false;
-            }
-            hasBoots = true;
-            document.getElementById("boots-slot").classList.remove("locked");
-            showNotification("👢 Botas equipadas!");
-            return true;
-          }
-          if (
-            ["cow", "pig", "duck", "rabbit", "chicken", "sheep"].includes(item)
-          ) {
-            pendingAnimal = item;
-            showNotification(`🐾 ${SPECIES_NAMES[item]} comprado!`);
-            return true;
-          }
-          return false;
-        },
-      },
-      player: {
-        moveRight: () => movePlayerRelative(0, 1),
-        moveLeft: () => movePlayerRelative(0, -1),
-        moveUp: () => movePlayerRelative(-1, 0),
-        moveDown: () => movePlayerRelative(1, 0),
-        getPosition: () => ({ x: player.tileX, y: player.tileY }),
-        getLevel: () => playerLevel,
-        getXP: () => playerXP,
-        getCoins: () => playerCoins,
-        isMoving: () => player.moving,
-      },
-      weather: {
-        setDay: () => {
-          timeOffset = getTimeToPeriod("DIA");
-          showNotification("☀️ Dia");
-        },
-        setAfternoon: () => {
-          timeOffset = getTimeToPeriod("TARDE");
-          showNotification("🌅 Tarde");
-        },
-        setNight: () => {
-          timeOffset = getTimeToPeriod("NOITE");
-          showNotification("🌙 Noite");
-        },
-        setAuto: () => {
-          timeOffset = 0;
-          showNotification("🔄 Automático");
-        },
-        sleep: () => {
-          skipToNextPeriod();
-        },
-        getCurrent: () => getCurrentWeather(),
-      },
-      wait: (ms) => new Promise((r) => setTimeout(r, ms)),
-    };
-
-    window.till = () => farm.soil.till();
-    window.water = () => farm.crops.water();
-    window.plant = (c) => farm.crops.plant(c);
-    window.harvest = () => farm.crops.harvest();
-    window.feedAnimal = (n) => farm.animals.feed(n);
-    window.leadAnimal = () => farm.animals.lead();
-    window.releaseAnimal = () => farm.animals.release();
-    window.collectAnimal = () => farm.animals.collect();
-    window.placeBuilding = () => farm.buildings.place();
-    window.useBuilding = () => farm.buildings.use();
-    window.destroyBuilding = () => farm.buildings.destroy();
-    window.getWater = () => farm.tools.getWater();
-    window.sleep = () => farm.weather.sleep();
-    window.wait = (ms) => farm.wait(ms);
-    window.moveRight = () => farm.player.moveRight();
-    window.moveLeft = () => farm.player.moveLeft();
-    window.moveUp = () => farm.player.moveUp();
-    window.moveDown = () => farm.player.moveDown();
-    window.setDia = () => farm.weather.setDay();
-    window.setTarde = () => farm.weather.setAfternoon();
-    window.setNoite = () => farm.weather.setNight();
-    window.setAutoClima = () => farm.weather.setAuto();
-
-    function getTimeToPeriod(t) {
-      const e = (Date.now() + timeOffset) % CYCLE_TOTAL;
-      if (t === "DIA") return timeOffset - e;
-      if (t === "TARDE") return timeOffset - e + 30 * MINUTE_MS;
-      if (t === "NOITE") return timeOffset - e + 40 * MINUTE_MS;
-      return timeOffset;
-    }
-    function getCurrentWeather() {
-      const e =
-        ((Date.now() % CYCLE_TOTAL) + timeOffset + CYCLE_TOTAL) % CYCLE_TOTAL;
-      if (e < 30 * MINUTE_MS) return "DIA";
-      if (e < 40 * MINUTE_MS) return "TARDE";
-      return "NOITE";
-    }
-    function skipToNextPeriod() {
-      const e =
-        ((Date.now() % CYCLE_TOTAL) + timeOffset + CYCLE_TOTAL) % CYCLE_TOTAL;
-      if (e < 30 * MINUTE_MS) timeOffset += 30 * MINUTE_MS - e;
-      else if (e < 40 * MINUTE_MS) timeOffset += 40 * MINUTE_MS - e;
-      else timeOffset += 60 * MINUTE_MS - e;
-      showNotification("💤 Descansou.");
-    }
-    function updateWaterBar() {
-      const c = document.getElementById("water-bar-container");
-      if (hasWateringCan) {
-        c.style.display = "flex";
-        document.getElementById("water-bar-inner").style.width =
-          (playerWater / MAX_WATER) * 100 + "%";
-        document.getElementById("water-text").textContent =
-          playerWater + "/" + MAX_WATER;
-      } else {
-        c.style.display = "none";
-      }
-    }
     function resize() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
@@ -1283,312 +878,10 @@
     }
     window.addEventListener("resize", resize);
     resize();
-    function tileCenterX(tx) {
-      return tx + 0.5;
-    }
-    function tileCenterY(ty) {
-      return ty + 0.5;
-    }
 
-    document.querySelectorAll(".shop-tab").forEach((tab) => {
-      tab.addEventListener("click", () => {
-        document
-          .querySelectorAll(".shop-tab")
-          .forEach((t) => t.classList.remove("active"));
-        document
-          .querySelectorAll(".shop-category")
-          .forEach((c) => c.classList.remove("active"));
-        tab.classList.add("active");
-        document
-          .getElementById("cat-" + tab.getAttribute("data-tab"))
-          .classList.add("active");
-      });
-    });
-    function updateShopUI() {
-      const li = document.getElementById("shop-lamppost");
-      if (playerLevel >= 2) {
-        li.classList.remove("locked");
-        li.innerHTML =
-          '<div class="item-info"><span class="item-name">💡 Poste de Luz</span></div><button class="btn" data-item="lamppost">COMPRAR</button>';
-      }
-      const wi = document.getElementById("shop-well");
-      if (playerLevel >= 3) {
-        wi.classList.remove("locked");
-        wi.innerHTML =
-          '<div class="item-info"><span class="item-name">🪣 Poço</span></div><button class="btn" data-item="well">COMPRAR</button>';
-      }
-      const bi = document.getElementById("shop-boots");
-      if (playerLevel >= 4) {
-        bi.classList.remove("locked");
-        bi.innerHTML =
-          '<div class="item-info"><span class="item-name">👢 Botas</span></div><button class="btn" data-item="boots">COMPRAR</button>';
-      }
-      if (playerLevel >= 3 && !hasWateringCan) {
-        hasWateringCan = true;
-        playerWater = MAX_WATER;
-        updateWaterBar();
-        document.getElementById("watering-can-slot").classList.remove("locked");
-        showNotification("🚿 Regador desbloqueado!");
-      }
-      if (playerLevel >= 4 && !hasBoots) {
-        hasBoots = true;
-        document.getElementById("boots-slot").classList.remove("locked");
-        showNotification("👢 Botas desbloqueadas!");
-      }
-      bindShopButtons();
-    }
-    function bindShopButtons() {
-      document
-        .querySelectorAll("#shop-modal .btn[data-item]")
-        .forEach((btn) => {
-          const nb = btn.cloneNode(true);
-          btn.parentNode.replaceChild(nb, btn);
-        });
-      document
-        .querySelectorAll("#shop-modal .btn[data-item]")
-        .forEach((btn) => {
-          btn.addEventListener("click", (e) => {
-            farm.shop.buy(e.target.getAttribute("data-item"));
-            document.getElementById("shop-modal").style.display = "none";
-          });
-        });
-    }
-    function updateHotbar() {
-      document.querySelectorAll(".hotbar-slot").forEach((s) => {
-        const sv = s.getAttribute("data-slot");
-        if (sv === "5") s.classList.toggle("active", selectedTool === "leash");
-        else if (sv === "6")
-          s.classList.toggle("active", selectedTool === "wateringcan");
-        else if (sv === "7")
-          s.classList.toggle("active", selectedTool === "hoe");
-        else if (sv === "8")
-          s.classList.toggle("active", selectedTool === "boots");
-        else
-          s.classList.toggle(
-            "active",
-            parseInt(sv) === selectedCrop && selectedTool === null,
-          );
-      });
-      document.getElementById("seedDisplay").textContent =
-        selectedTool === "leash"
-          ? "🧶 Corda"
-          : selectedTool === "wateringcan"
-            ? "🚿 Regador"
-            : selectedTool === "hoe"
-              ? "🔧 Enxada"
-              : selectedTool === "boots"
-                ? "👢 Botas"
-                : selectedCrop === -1
-                  ? "👐 Mãos vazias"
-                  : `🌱 ${Object.values(CROP_EMOJIS)[selectedCrop]} ${Object.values(CROP_NAMES)[selectedCrop]}`;
-    }
-    document.querySelectorAll(".hotbar-slot").forEach((s) => {
-      s.addEventListener("click", () => {
-        const sv = s.getAttribute("data-slot");
-        if (sv === "6" && !hasWateringCan) {
-          showNotification("🔒 Nível 3");
-          return;
-        }
-        if (sv === "8" && !hasBoots) {
-          showNotification("🔒 Nível 4");
-          return;
-        }
-        if (sv === "5") {
-          selectedTool = selectedTool === "leash" ? null : "leash";
-          if (selectedTool === "leash") selectedCrop = -1;
-        } else if (sv === "6") {
-          selectedTool = selectedTool === "wateringcan" ? null : "wateringcan";
-          if (selectedTool === "wateringcan") selectedCrop = -1;
-        } else if (sv === "7") {
-          selectedTool = selectedTool === "hoe" ? null : "hoe";
-          if (selectedTool === "hoe") selectedCrop = -1;
-        } else if (sv === "8") {
-          selectedTool = selectedTool === "boots" ? null : "boots";
-          if (selectedTool === "boots") selectedCrop = -1;
-        } else {
-          selectedTool = null;
-          selectedCrop = parseInt(sv);
-        }
-        updateHotbar();
-      });
-    });
-
-    function formatHint(func, cond, ret) {
-      return `${func}<br><span class="hint-detail">${cond ? "Cond: " + cond + ". " : ""}Ret: ${ret}</span>`;
-    }
-    function showHint(code) {
-      hintBubble.innerHTML = code;
-      hintBubble.style.display = "block";
-    }
-    function hideHint() {
-      hintBubble.innerHTML = "";
-      hintBubble.style.display = "none";
-    }
-    function showLevelUpModal() {
-      const m = document.getElementById("levelup-modal");
-      document.getElementById("levelup-level").textContent =
-        `Nível ${playerLevel}`;
-      playerCoins += playerLevel * 100;
-      let u = "";
-      if (playerLevel === 2) u = "🔓 Poste de Luz!";
-      if (playerLevel === 3) u = "🔓 Regador + Poço!";
-      if (playerLevel === 4) u = "🔓 Botas!";
-      document.getElementById("levelup-unlock").textContent = u;
-      m.style.display = "block";
-      document.getElementById("levelup-close").onclick = () => {
-        m.style.display = "none";
-      };
-      clearTimeout(m._timeout);
-      m._timeout = setTimeout(() => {
-        m.style.display = "none";
-      }, 5000);
-    }
-
-    commandInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        const cmd = commandInput.value.trim();
-        commandInput.value = "";
-        if (cmd) executeFreeCommand(cmd);
-      }
-    });
-    window.addEventListener("keydown", (e) => {
-      if (document.getElementById("editor-modal").style.display === "block")
-        return;
-      if (document.getElementById("shop-modal").style.display === "block")
-        return;
-      if (document.getElementById("friends-modal").style.display === "block")
-        return;
-      if (document.getElementById("levelup-modal").style.display === "block") {
-        if (e.key === "Enter" || e.key === "Escape")
-          document.getElementById("levelup-modal").style.display = "none";
-        return;
-      }
-      if (document.activeElement === commandInput) return;
-      if (e.key === "0") {
-        selectedCrop = -1;
-        selectedTool = null;
-        updateHotbar();
-        e.preventDefault();
-      }
-      if (e.key === "1") {
-        selectedCrop = 0;
-        selectedTool = null;
-        updateHotbar();
-      }
-      if (e.key === "2") {
-        selectedCrop = 1;
-        selectedTool = null;
-        updateHotbar();
-      }
-      if (e.key === "3") {
-        selectedCrop = 2;
-        selectedTool = null;
-        updateHotbar();
-      }
-      if (e.key === "4") {
-        selectedCrop = 3;
-        selectedTool = null;
-        updateHotbar();
-      }
-      if (e.key === "5") {
-        selectedTool = selectedTool === "leash" ? null : "leash";
-        if (selectedTool === "leash") selectedCrop = -1;
-        updateHotbar();
-        e.preventDefault();
-      }
-      if (e.key === "6") {
-        if (!hasWateringCan) {
-          showNotification("🔒 Nível 3");
-          return;
-        }
-        selectedTool = selectedTool === "wateringcan" ? null : "wateringcan";
-        if (selectedTool === "wateringcan") selectedCrop = -1;
-        updateHotbar();
-        e.preventDefault();
-      }
-      if (e.key === "7") {
-        selectedTool = selectedTool === "hoe" ? null : "hoe";
-        if (selectedTool === "hoe") selectedCrop = -1;
-        updateHotbar();
-        e.preventDefault();
-      }
-      if (e.key === "8") {
-        if (!hasBoots) {
-          showNotification("🔒 Nível 4");
-          return;
-        }
-        selectedTool = selectedTool === "boots" ? null : "boots";
-        if (selectedTool === "boots") selectedCrop = -1;
-        updateHotbar();
-        e.preventDefault();
-      }
-    });
-
-    function executeFreeCommand(cmd) {
-      if (!cmd) return;
-      try {
-        eval(cmd);
-      } catch (e) {
-        showNotification("❓ " + cmd);
-      }
-    }
-
-    function getNearestBuilding() {
-      let n = null,
-        d = 2;
-      buildings.forEach((b) => {
-        const dist = Math.hypot(player.x - (b.x + 0.5), player.y - (b.y + 0.5));
-        if (dist < d) {
-          d = dist;
-          n = b;
-        }
-      });
-      return n;
-    }
-    function getNearestAnimal() {
-      let n = null,
-        d = 1.5;
-      wildAnimals.forEach((a) => {
-        const dist = Math.hypot(player.x - a.x, player.y - a.y);
-        if (dist < d) {
-          d = dist;
-          n = a;
-        }
-      });
-      return n;
-    }
-    function spawnHearts(wx, wy, count) {
-      for (let i = 0; i < count; i++)
-        floatingHearts.push({
-          x: wx,
-          y: wy,
-          timer: 60 + Math.random() * 40,
-          offsetX: (Math.random() - 0.5) * 0.8,
-          offsetY: 0,
-        });
-    }
-
-    document.getElementById("shop-btn").addEventListener("click", () => {
-      document.getElementById("shop-modal").style.display = "block";
-      updateShopUI();
-    });
-    document
-      .getElementById("close-shop")
-      .addEventListener(
-        "click",
-        () => (document.getElementById("shop-modal").style.display = "none"),
-      );
-    bindShopButtons();
-
-    // Inicialização: SÓ host gera mapa
-    if (isHost || !roomId) {
-      initializeMap();
-      worldReceived = true;
-    }
-
-    function initializeMap() {
+    if (generateMap) {
       for (let y = 0; y < MAP_H; y++)
-        for (let x = 0; x < MAP_W; x++) map[y][x] = TILE_GRASS;
+        for (let x = 0; x < MAP_W; x++) gameMap[y][x] = TILE_GRASS;
       for (let r = 0; r < 2; r++) {
         let cx = 10 + Math.floor(Math.random() * (MAP_W - 20)),
           cy = 0;
@@ -1601,9 +894,9 @@
               cy < farmHouse.y + farmHouse.h
             )
           ) {
-            map[cy][cx] = TILE_RIVER;
+            gameMap[cy][cx] = TILE_RIVER;
             if (Math.random() < 0.2 && cx + 1 < MAP_W)
-              map[cy][cx + 1] = TILE_RIVER;
+              gameMap[cy][cx + 1] = TILE_RIVER;
           }
           cx += Math.floor(Math.random() * 3) - 1;
           cy += 1;
@@ -1621,7 +914,7 @@
             tx < MAP_W &&
             ty >= 0 &&
             ty < MAP_H &&
-            map[ty][tx] === TILE_GRASS &&
+            gameMap[ty][tx] === TILE_GRASS &&
             !(
               tx >= farmHouse.x &&
               tx < farmHouse.x + farmHouse.w &&
@@ -1630,7 +923,7 @@
             ) &&
             Math.random() < 0.4
           )
-            map[ty][tx] = TILE_TREE;
+            gameMap[ty][tx] = TILE_TREE;
         }
       }
       for (let i = 0; i < 25; i++) {
@@ -1644,17 +937,17 @@
             bx < MAP_W &&
             by >= 0 &&
             by < MAP_H &&
-            map[by][bx] === TILE_GRASS
+            gameMap[by][bx] === TILE_GRASS
           )
-            map[by][bx] = TILE_BUSH;
+            gameMap[by][bx] = TILE_BUSH;
         }
       }
       for (let i = 0; i < 12; i++) {
         let fx = Math.floor(Math.random() * MAP_W),
           fy = Math.floor(Math.random() * MAP_H);
-        if (map[fy][fx] === TILE_GRASS) {
-          map[fy][fx] = TILE_FRUIT_TREE;
-          fruitTreeTimers[`${fx},${fy}`] = 0;
+        if (gameMap[fy][fx] === TILE_GRASS) {
+          gameMap[fy][fx] = TILE_FRUIT_TREE;
+          gameFruitTreeTimers[`${fx},${fy}`] = 0;
         }
       }
       const initSpec = [
@@ -1674,37 +967,16 @@
         do {
           ax = Math.floor(Math.random() * MAP_W);
           ay = Math.floor(Math.random() * MAP_H);
-        } while (!isWalkable(ax, ay) || map[ay][ax] !== TILE_GRASS);
-        wildAnimals.push(createAnimal(spec, ax + 0.5, ay + 0.5));
+        } while (!isWalkable(ax, ay) || gameMap[ay][ax] !== TILE_GRASS);
+        gameWildAnimals.push(createGameAnimal(spec, ax + 0.5, ay + 0.5));
       });
-    }
-    function createAnimal(species, x, y) {
-      return {
-        x,
-        y,
-        targetX: x,
-        targetY: y,
-        species,
-        name: SPECIES_NAMES[species],
-        type: SPECIES_EMOJIS[species],
-        speed: SPECIES_SPEEDS[species] || 0.02,
-        dir: "front",
-        isInteracting: false,
-        isLeashed: false,
-        fed: false,
-        timer: Math.random() * 100,
-        stage: 0,
-        growthStart: Date.now(),
-        promptTimer: 0,
-        feedCount: 0,
-      };
     }
 
     function isWalkable(tx, ty) {
       if (tx < 0 || tx >= MAP_W || ty < 0 || ty >= MAP_H) return false;
-      const tile = map[ty][tx];
+      const tile = gameMap[ty][tx];
       if (tile === TILE_FENCE) return false;
-      if (selectedTool === "boots" && tile === TILE_RIVER) return true;
+      if (gameSelectedTool === "boots" && tile === TILE_RIVER) return true;
       if (tile === TILE_LAMPPOST || tile === TILE_WELL || tile === TILE_TILLED)
         return true;
       const inHouse =
@@ -1719,7 +991,7 @@
       const tx = Math.floor(nx),
         ty = Math.floor(ny);
       if (tx < 0 || tx >= MAP_W || ty < 0 || ty >= MAP_H) return false;
-      const tile = map[ty][tx];
+      const tile = gameMap[ty][tx];
       if (tile === TILE_FENCE) return false;
       if (tile === TILE_RIVER && animal.species !== "duck") return false;
       return true;
@@ -1732,8 +1004,8 @@
     }
 
     function buildPathTo(destTX, destTY) {
-      const sTX = player.tileX,
-        sTY = player.tileY;
+      const sTX = gamePlayer.tileX,
+        sTY = gamePlayer.tileY;
       if (sTX === destTX && sTY === destTY) return [];
       const visited = new Set(),
         queue = [[sTX, sTY, []]];
@@ -1749,7 +1021,7 @@
           if (nx === destTX && ny === destTY)
             return [
               ...path,
-              { x: tileCenterX(nx), y: tileCenterY(ny), tileX: nx, tileY: ny },
+              { x: nx + 0.5, y: ny + 0.5, tileX: nx, tileY: ny },
             ];
           const key = `${nx},${ny}`;
           if (!visited.has(key) && isWalkable(nx, ny)) {
@@ -1757,15 +1029,7 @@
             queue.push([
               nx,
               ny,
-              [
-                ...path,
-                {
-                  x: tileCenterX(nx),
-                  y: tileCenterY(ny),
-                  tileX: nx,
-                  tileY: ny,
-                },
-              ],
+              [...path, { x: nx + 0.5, y: ny + 0.5, tileX: nx, tileY: ny }],
             ]);
           }
         }
@@ -1773,65 +1037,63 @@
       return [];
     }
     function startMoveAlongPath(path, actionOnEnd) {
-      if (player.moving || path.length === 0) return;
-      player.movePath = path;
-      player.moving = true;
-      player.actionOnArrival = actionOnEnd;
+      if (gamePlayer.moving || path.length === 0) return;
+      gamePlayer.movePath = path;
+      gamePlayer.moving = true;
+      gamePlayer.actionOnArrival = actionOnEnd;
       advanceToNextTile();
     }
     function advanceToNextTile() {
-      if (player.movePath.length === 0) {
-        player.moving = false;
-        player.tileX = Math.round(player.x - 0.5);
-        player.tileY = Math.round(player.y - 0.5);
-        player.x = tileCenterX(player.tileX);
-        player.y = tileCenterY(player.tileY);
-        if (player.actionOnArrival) {
-          player.actionOnArrival = false;
-          executeAction(player.tileX, player.tileY);
+      if (gamePlayer.movePath.length === 0) {
+        gamePlayer.moving = false;
+        gamePlayer.tileX = Math.round(gamePlayer.x - 0.5);
+        gamePlayer.tileY = Math.round(gamePlayer.y - 0.5);
+        gamePlayer.x = gamePlayer.tileX + 0.5;
+        gamePlayer.y = gamePlayer.tileY + 0.5;
+        if (gamePlayer.actionOnArrival) {
+          gamePlayer.actionOnArrival = false;
+          executeAction(gamePlayer.tileX, gamePlayer.tileY);
         }
         checkNearbyInteraction();
         return;
       }
-      const next = player.movePath.shift();
-      player.moveStartX = player.x;
-      player.moveStartY = player.y;
-      player.moveTargetX = next.x;
-      player.moveTargetY = next.y;
-      player.moveStartTime = performance.now();
-      player.tileX = next.tileX;
-      player.tileY = next.tileY;
-      const dx = player.moveTargetX - player.moveStartX,
-        dy = player.moveTargetY - player.moveStartY;
-      if (Math.abs(dx) > Math.abs(dy)) player.dir = dx > 0 ? "right" : "left";
-      else player.dir = dy > 0 ? "front" : "back";
+      const next = gamePlayer.movePath.shift();
+      gamePlayer.moveStartX = gamePlayer.x;
+      gamePlayer.moveStartY = gamePlayer.y;
+      gamePlayer.moveTargetX = next.x;
+      gamePlayer.moveTargetY = next.y;
+      gamePlayer.moveStartTime = performance.now();
+      gamePlayer.tileX = next.tileX;
+      gamePlayer.tileY = next.tileY;
     }
 
     canvas.addEventListener("mousedown", (e) => {
       const rect = canvas.getBoundingClientRect(),
         sx = canvas.width / rect.width,
         sy = canvas.height / rect.height,
-        cx = ((e.clientX - rect.left) * sx) / TILE_SIZE + camX,
-        cy = ((e.clientY - rect.top) * sy) / TILE_SIZE + camY,
+        cx = ((e.clientX - rect.left) * sx) / TILE_SIZE + gameCamX,
+        cy = ((e.clientY - rect.top) * sy) / TILE_SIZE + gameCamY,
         tx = Math.floor(cx),
         ty = Math.floor(cy);
-      if (pendingAnimal) {
+      if (gamePendingAnimal) {
         if (
           isWalkable(tx, ty) &&
-          (map[ty][tx] === TILE_GRASS || map[ty][tx] === TILE_TILLED)
+          (gameMap[ty][tx] === TILE_GRASS || gameMap[ty][tx] === TILE_TILLED)
         ) {
-          wildAnimals.push(createAnimal(pendingAnimal, tx + 0.5, ty + 0.5));
-          showNotification(`🐾 ${SPECIES_NAMES[pendingAnimal]} solto!`);
+          gameWildAnimals.push(
+            createGameAnimal(gamePendingAnimal, tx + 0.5, ty + 0.5),
+          );
+          showNotification(`🐾 ${SPECIES_NAMES[gamePendingAnimal]} solto!`);
         } else showNotification("❌ Local inválido.");
-        pendingAnimal = null;
+        gamePendingAnimal = null;
         return;
       }
-      if (player.moving) return;
+      if (gamePlayer.moving) return;
       if (!isWalkable(tx, ty)) {
         showNotification("🚧 Bloqueado!");
         return;
       }
-      if (tx === player.tileX && ty === player.tileY) {
+      if (tx === gamePlayer.tileX && ty === gamePlayer.tileY) {
         executeAction(tx, ty);
         return;
       }
@@ -1841,9 +1103,9 @@
     });
 
     function movePlayerRelative(dRow, dCol) {
-      if (player.moving) return Promise.resolve();
-      const tx = player.tileX + dCol,
-        ty = player.tileY + dRow;
+      if (gamePlayer.moving) return Promise.resolve();
+      const tx = gamePlayer.tileX + dCol,
+        ty = gamePlayer.tileY + dRow;
       if (!isWalkable(tx, ty)) {
         showNotification("🚫 Bloqueado!");
         return Promise.resolve();
@@ -1856,109 +1118,169 @@
     function waitForArrival() {
       return new Promise((res) => {
         const check = () => {
-          if (!player.moving) res();
+          if (!gamePlayer.moving) res();
           else requestAnimationFrame(check);
         };
         check();
       });
     }
 
-    function updateLevel() {
-      const nl = Math.floor(playerXP / XP_PER_LEVEL) + 1;
-      if (nl > playerLevel) {
-        playerLevel = nl;
-        updateShopUI();
-        showLevelUpModal();
-      }
-      document.getElementById("xpDisplay").textContent =
-        `⭐ Nv.${playerLevel} | XP: ${playerXP}/${playerLevel * XP_PER_LEVEL} 💰${playerCoins}`;
+    function getNearestBuilding() {
+      let n = null,
+        d = 2;
+      gameBuildings.forEach((b) => {
+        const dist = Math.hypot(
+          gamePlayer.x - (b.x + 0.5),
+          gamePlayer.y - (b.y + 0.5),
+        );
+        if (dist < d) {
+          d = dist;
+          n = b;
+        }
+      });
+      return n;
     }
-    function setFacing(entity, target) {
-      const dx = target.x - entity.x,
-        dy = target.y - entity.y;
-      entity.dir =
-        Math.abs(dx) > Math.abs(dy)
-          ? dx > 0
-            ? "right"
-            : "left"
-          : dy > 0
-            ? "front"
-            : "back";
+    function getNearestAnimal() {
+      let n = null,
+        d = 1.5;
+      gameWildAnimals.forEach((a) => {
+        const dist = Math.hypot(gamePlayer.x - a.x, gamePlayer.y - a.y);
+        if (dist < d) {
+          d = dist;
+          n = a;
+        }
+      });
+      return n;
+    }
+    function spawnHearts(wx, wy, count) {
+      for (let i = 0; i < count; i++)
+        gameFloatingHearts.push({
+          x: wx,
+          y: wy,
+          timer: 60 + Math.random() * 40,
+          offsetX: (Math.random() - 0.5) * 0.8,
+          offsetY: 0,
+        });
     }
 
-    function checkNearbyInteraction() {
-      const px = player.x,
-        py = player.y,
-        tx = player.tileX,
-        ty = player.tileY,
-        key = `${tx},${ty}`,
-        tile = map[ty] ? map[ty][tx] : null;
-      hideHint();
-      if (tile === TILE_WELL && hasWateringCan) {
-        showHint(
-          formatHint(
-            "farm.tools.getWater()",
-            "Próximo a poço",
-            "true se cheio",
-          ),
-        );
+    function executeAction(x, y) {
+      const tile = gameMap[y][x],
+        key = `${x},${y}`;
+      if (gameCrops[key] && gameCrops[key].ready) {
+        gamePlayerXP += 20;
+        updateLevel();
+        delete gameCrops[key];
+        gamePlayerCoins += 10;
+        showNotification("🌾 Colheu!");
+        broadcastAction({ action: "harvest", tileX: x, tileY: y });
         return;
       }
-      if (pendingBuilding) {
-        showHint(
-          formatHint(
-            "farm.buildings.place()",
-            "Item comprado",
-            "true se colocado",
-          ),
-        );
-        return;
-      }
-      if (selectedTool === "hoe" && tile === TILE_GRASS) {
-        showHint(
-          formatHint("farm.soil.till()", "TOOLS.HOE equipado", "true se arado"),
-        );
-        return;
-      }
-      if (selectedTool === "wateringcan" && crops[key] && !crops[key].ready) {
-        showHint(
-          formatHint("farm.crops.water()", "Regador equipado", "true se regou"),
-        );
-        return;
-      }
-      if (crops[key] && crops[key].ready) {
-        showHint(
-          formatHint("farm.crops.harvest()", "Cultura pronta", "true ou false"),
-        );
-        return;
-      }
-      if (tile === TILE_FRUIT_TREE && fruitTreeTimers[key] >= 300) {
-        showHint(
-          formatHint(
-            "farm.crops.harvest()",
-            "Fruta madura",
-            "'fruit' ou false",
-          ),
-        );
+      if (tile === TILE_FRUIT_TREE && gameFruitTreeTimers[key] >= 300) {
+        gamePlayerXP += 50;
+        updateLevel();
+        gameFruitTreeTimers[key] = 0;
+        gamePlayerCoins += 25;
+        showNotification("🍎 Frutas!");
         return;
       }
       if (
         tile === TILE_TILLED &&
-        !crops[key] &&
-        selectedCrop >= 0 &&
-        selectedTool === null
+        !gameCrops[key] &&
+        gameSelectedCrop >= 0 &&
+        gameSelectedTool === null
       ) {
-        const cn = Object.keys(CROP_NAMES)[selectedCrop];
+        const cn = Object.keys(CROP_NAMES)[gameSelectedCrop];
+        gameCrops[key] = {
+          type: gameSelectedCrop,
+          timer: 0,
+          ready: false,
+          growTime: Object.values(CROP_GROW_TIMES)[gameSelectedCrop],
+        };
+        showNotification(`🌱 Plantou ${CROP_NAMES[cn]}!`);
+        broadcastAction({
+          action: "plant",
+          tileX: x,
+          tileY: y,
+          cropType: gameSelectedCrop,
+        });
+        return;
+      }
+      if (
+        tile === TILE_GRASS &&
+        !gameCrops[key] &&
+        gameSelectedTool === "hoe"
+      ) {
+        gameMap[y][x] = TILE_TILLED;
+        showNotification("⛏️ Terra arada!");
+        broadcastAction({ action: "till", tileX: x, tileY: y });
+        return;
+      }
+    }
+
+    function updateLevel() {
+      const nl = Math.floor(gamePlayerXP / XP_PER_LEVEL) + 1;
+      if (nl > gamePlayerLevel) {
+        gamePlayerLevel = nl;
+        updateGameShopUI();
+        showLevelUpModal();
+      }
+      document.getElementById("xpDisplay").textContent =
+        `⭐ Nv.${gamePlayerLevel} | XP: ${gamePlayerXP}/${gamePlayerLevel * XP_PER_LEVEL} 💰${gamePlayerCoins}`;
+    }
+
+    function checkNearbyInteraction() {
+      const px = gamePlayer.x,
+        py = gamePlayer.y,
+        tx = gamePlayer.tileX,
+        ty = gamePlayer.tileY,
+        key = `${tx},${ty}`,
+        tile = gameMap[ty] ? gameMap[ty][tx] : null;
+      hideHint();
+      if (tile === TILE_WELL && gameHasWateringCan) {
+        showHint(formatHint("farm.tools.getWater()", "Poço", "true"));
+        return;
+      }
+      if (gamePendingBuilding) {
+        showHint(formatHint("farm.buildings.place()", "Item comprado", "true"));
+        return;
+      }
+      if (gameSelectedTool === "hoe" && tile === TILE_GRASS) {
+        showHint(formatHint("farm.soil.till()", "Enxada equipada", "true"));
+        return;
+      }
+      if (
+        gameSelectedTool === "wateringcan" &&
+        gameCrops[key] &&
+        !gameCrops[key].ready
+      ) {
+        showHint(formatHint("farm.crops.water()", "Regador equipado", "true"));
+        return;
+      }
+      if (gameCrops[key] && gameCrops[key].ready) {
+        showHint(formatHint("farm.crops.harvest()", "Cultura pronta", "true"));
+        return;
+      }
+      if (tile === TILE_FRUIT_TREE && gameFruitTreeTimers[key] >= 300) {
+        showHint(formatHint("farm.crops.harvest()", "Fruta madura", "fruta"));
+        return;
+      }
+      if (
+        tile === TILE_TILLED &&
+        !gameCrops[key] &&
+        gameSelectedCrop >= 0 &&
+        gameSelectedTool === null
+      ) {
+        const cn = Object.keys(CROP_NAMES)[gameSelectedCrop];
         showHint(
           formatHint(
             `farm.crops.plant(CROPS.${cn.toUpperCase()})`,
             "Terra arada",
-            "true se plantou",
+            "true",
           ),
         );
         return;
       }
-      if (selectedTool === "leash") {
+      if (gameSelectedTool === "leash") {
         const nearest = getNearestAnimal();
         if (nearest && Math.hypot(px - nearest.x, py - nearest.y) < 1.5) {
           showHint(
@@ -1966,26 +1288,22 @@
               nearest.isLeashed
                 ? "farm.animals.release()"
                 : "farm.animals.lead()",
-              "TOOLS.LEASH equipado",
-              nearest.isLeashed ? "true se solto" : "nome do animal",
+              "Corda equipada",
+              nearest.isLeashed ? "true" : "nome",
             ),
           );
           return;
         }
       }
-      const na = wildAnimals.find(
+      const na = gameWildAnimals.find(
         (a) =>
           a.isInteracting &&
           a.promptTimer > 30 &&
           Math.hypot(px - a.x, py - a.y) < 1.5,
       );
-      if (na && selectedTool !== "leash") {
+      if (na && gameSelectedTool !== "leash") {
         showHint(
-          formatHint(
-            `farm.animals.feed("${na.name}")`,
-            "Próximo ao animal",
-            "true se alimentado",
-          ),
+          formatHint(`farm.animals.feed("${na.name}")`, "Próximo", "true"),
         );
         return;
       }
@@ -1994,108 +1312,732 @@
         showHint(
           formatHint(
             b.isReady ? "farm.buildings.use()" : "⏳ Em andamento...",
-            b.isReady ? "Construção pronta" : "Aguardando",
-            b.isReady ? "tipo da construção" : "nenhum",
+            b.isReady ? "Pronto" : "Aguardando",
+            b.isReady ? "tipo" : "",
           ),
         );
-        return;
-      }
-      const inHouse =
-        tx >= farmHouse.x &&
-        tx < farmHouse.x + farmHouse.w &&
-        ty >= farmHouse.y &&
-        ty < farmHouse.y + farmHouse.h;
-      if (inHouse) {
-        showHint(
-          formatHint(
-            "farm.weather.sleep()",
-            "Dentro da casa",
-            "avança o tempo",
-          ),
-        );
-      }
-    }
-
-    function executeAction(x, y) {
-      const tile = map[y][x],
-        key = `${x},${y}`;
-      if (crops[key] && crops[key].ready) {
-        playerXP += 20;
-        updateLevel();
-        delete crops[key];
-        playerCoins += 10;
-        showNotification("🌾 Colheu!");
-        broadcastAction({ action: "harvest", tileX: x, tileY: y });
-        return;
-      }
-      if (tile === TILE_FRUIT_TREE && fruitTreeTimers[key] >= 300) {
-        playerXP += 50;
-        updateLevel();
-        fruitTreeTimers[key] = 0;
-        playerCoins += 25;
-        showNotification("🍎 Frutas!");
         return;
       }
       if (
-        tile === TILE_TILLED &&
-        !crops[key] &&
-        selectedCrop >= 0 &&
-        selectedTool === null
+        tx >= farmHouse.x &&
+        tx < farmHouse.x + farmHouse.w &&
+        ty >= farmHouse.y &&
+        ty < farmHouse.y + farmHouse.h
       ) {
-        const cn = Object.keys(CROP_NAMES)[selectedCrop];
-        crops[key] = {
-          type: selectedCrop,
-          timer: 0,
-          ready: false,
-          growTime: Object.values(CROP_GROW_TIMES)[selectedCrop],
-        };
-        showNotification(`🌱 Plantou ${CROP_NAMES[cn]}!`);
-        broadcastAction({
-          action: "plant",
-          tileX: x,
-          tileY: y,
-          cropType: selectedCrop,
-        });
-        return;
-      }
-      if (tile === TILE_GRASS && !crops[key] && selectedTool === "hoe") {
-        map[y][x] = TILE_TILLED;
-        showNotification("⛏️ Terra arada!");
-        broadcastAction({ action: "till", tileX: x, tileY: y });
-        return;
+        showHint(formatHint("farm.weather.sleep()", "Casa", "avança tempo"));
       }
     }
 
+    function formatHint(func, cond, ret) {
+      return `${func}<br><span class="hint-detail">${cond ? "Cond: " + cond + ". " : ""}Ret: ${ret}</span>`;
+    }
+    function showHint(code) {
+      hintBubble.innerHTML = code;
+      hintBubble.style.display = "block";
+    }
+    function hideHint() {
+      hintBubble.innerHTML = "";
+      hintBubble.style.display = "none";
+    }
+    function showLevelUpModal() {
+      const m = document.getElementById("levelup-modal");
+      document.getElementById("levelup-level").textContent =
+        `Nível ${gamePlayerLevel}`;
+      gamePlayerCoins += gamePlayerLevel * 100;
+      let u = "";
+      if (gamePlayerLevel === 2) u = "🔓 Poste de Luz!";
+      if (gamePlayerLevel === 3) u = "🔓 Regador + Poço!";
+      if (gamePlayerLevel === 4) u = "🔓 Botas!";
+      document.getElementById("levelup-unlock").textContent = u;
+      m.style.display = "block";
+      document.getElementById("levelup-close").onclick = () => {
+        m.style.display = "none";
+      };
+      clearTimeout(m._timeout);
+      m._timeout = setTimeout(() => {
+        m.style.display = "none";
+      }, 5000);
+    }
+
+    function updateGameWaterBar() {
+      const c = document.getElementById("water-bar-container");
+      if (gameHasWateringCan) {
+        c.style.display = "flex";
+        document.getElementById("water-bar-inner").style.width =
+          (gamePlayerWater / MAX_WATER) * 100 + "%";
+        document.getElementById("water-text").textContent =
+          gamePlayerWater + "/" + MAX_WATER;
+      } else {
+        c.style.display = "none";
+      }
+    }
+    function updateGameShopUI() {
+      const li = document.getElementById("shop-lamppost");
+      if (gamePlayerLevel >= 2) {
+        li.classList.remove("locked");
+        li.innerHTML =
+          '<div class="item-info"><span class="item-name">💡 Poste de Luz</span></div><button class="btn" data-item="lamppost">COMPRAR</button>';
+      }
+      const wi = document.getElementById("shop-well");
+      if (gamePlayerLevel >= 3) {
+        wi.classList.remove("locked");
+        wi.innerHTML =
+          '<div class="item-info"><span class="item-name">🪣 Poço</span></div><button class="btn" data-item="well">COMPRAR</button>';
+      }
+      const bi = document.getElementById("shop-boots");
+      if (gamePlayerLevel >= 4) {
+        bi.classList.remove("locked");
+        bi.innerHTML =
+          '<div class="item-info"><span class="item-name">👢 Botas</span></div><button class="btn" data-item="boots">COMPRAR</button>';
+      }
+      if (gamePlayerLevel >= 3 && !gameHasWateringCan) {
+        gameHasWateringCan = true;
+        gamePlayerWater = MAX_WATER;
+        updateGameWaterBar();
+        document.getElementById("watering-can-slot").classList.remove("locked");
+        showNotification("🚿 Regador desbloqueado!");
+      }
+      if (gamePlayerLevel >= 4 && !gameHasBoots) {
+        gameHasBoots = true;
+        document.getElementById("boots-slot").classList.remove("locked");
+        showNotification("👢 Botas desbloqueadas!");
+      }
+      bindShopButtons();
+    }
+    function updateGameHotbar() {
+      document.querySelectorAll(".hotbar-slot").forEach((s) => {
+        const sv = s.getAttribute("data-slot");
+        if (sv === "5")
+          s.classList.toggle("active", gameSelectedTool === "leash");
+        else if (sv === "6")
+          s.classList.toggle("active", gameSelectedTool === "wateringcan");
+        else if (sv === "7")
+          s.classList.toggle("active", gameSelectedTool === "hoe");
+        else if (sv === "8")
+          s.classList.toggle("active", gameSelectedTool === "boots");
+        else
+          s.classList.toggle(
+            "active",
+            parseInt(sv) === gameSelectedCrop && gameSelectedTool === null,
+          );
+      });
+      document.getElementById("seedDisplay").textContent =
+        gameSelectedTool === "leash"
+          ? "🧶 Corda"
+          : gameSelectedTool === "wateringcan"
+            ? "🚿 Regador"
+            : gameSelectedTool === "hoe"
+              ? "🔧 Enxada"
+              : gameSelectedTool === "boots"
+                ? "👢 Botas"
+                : gameSelectedCrop === -1
+                  ? "👐 Mãos vazias"
+                  : `🌱 ${Object.values(CROP_EMOJIS)[gameSelectedCrop]} ${Object.values(CROP_NAMES)[gameSelectedCrop]}`;
+    }
+
+    function bindShopButtons() {
+      document
+        .querySelectorAll("#shop-modal .btn[data-item]")
+        .forEach((btn) => {
+          const nb = btn.cloneNode(true);
+          btn.parentNode.replaceChild(nb, btn);
+        });
+      document
+        .querySelectorAll("#shop-modal .btn[data-item]")
+        .forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            const item = e.target.getAttribute("data-item");
+            if (["barn", "silo", "fence", "lamppost", "well"].includes(item)) {
+              if (item === "lamppost" && gamePlayerLevel < 2) {
+                showNotification("🔒 Nv.2");
+                return;
+              }
+              if (item === "well" && gamePlayerLevel < 3) {
+                showNotification("🔒 Nv.3");
+                return;
+              }
+              gamePendingBuilding = { type: item };
+              showNotification(`🏗️ ${item} comprado! farm.buildings.place()`);
+            } else if (item === "boots") {
+              if (gamePlayerLevel < 4) {
+                showNotification("🔒 Nv.4");
+                return;
+              }
+              gameHasBoots = true;
+              document.getElementById("boots-slot").classList.remove("locked");
+              showNotification("👢 Botas equipadas!");
+            } else if (
+              ["cow", "pig", "duck", "rabbit", "chicken", "sheep"].includes(
+                item,
+              )
+            ) {
+              gamePendingAnimal = item;
+              showNotification(`🐾 ${SPECIES_NAMES[item]} comprado!`);
+            }
+            document.getElementById("shop-modal").style.display = "none";
+          });
+        });
+    }
+
+    document.querySelectorAll(".shop-tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        document
+          .querySelectorAll(".shop-tab")
+          .forEach((t) => t.classList.remove("active"));
+        document
+          .querySelectorAll(".shop-category")
+          .forEach((c) => c.classList.remove("active"));
+        tab.classList.add("active");
+        document
+          .getElementById("cat-" + tab.getAttribute("data-tab"))
+          .classList.add("active");
+      });
+    });
+    document.getElementById("shop-btn").addEventListener("click", () => {
+      document.getElementById("shop-modal").style.display = "block";
+      updateGameShopUI();
+    });
+    document
+      .getElementById("close-shop")
+      .addEventListener(
+        "click",
+        () => (document.getElementById("shop-modal").style.display = "none"),
+      );
+    bindShopButtons();
+
+    document.querySelectorAll(".hotbar-slot").forEach((s) => {
+      s.addEventListener("click", () => {
+        const sv = s.getAttribute("data-slot");
+        if (sv === "6" && !gameHasWateringCan) {
+          showNotification("🔒 Nível 3");
+          return;
+        }
+        if (sv === "8" && !gameHasBoots) {
+          showNotification("🔒 Nível 4");
+          return;
+        }
+        if (sv === "5") {
+          gameSelectedTool = gameSelectedTool === "leash" ? null : "leash";
+          if (gameSelectedTool === "leash") gameSelectedCrop = -1;
+        } else if (sv === "6") {
+          gameSelectedTool =
+            gameSelectedTool === "wateringcan" ? null : "wateringcan";
+          if (gameSelectedTool === "wateringcan") gameSelectedCrop = -1;
+        } else if (sv === "7") {
+          gameSelectedTool = gameSelectedTool === "hoe" ? null : "hoe";
+          if (gameSelectedTool === "hoe") gameSelectedCrop = -1;
+        } else if (sv === "8") {
+          gameSelectedTool = gameSelectedTool === "boots" ? null : "boots";
+          if (gameSelectedTool === "boots") gameSelectedCrop = -1;
+        } else {
+          gameSelectedTool = null;
+          gameSelectedCrop = parseInt(sv);
+        }
+        updateGameHotbar();
+      });
+    });
+
+    window.farm = {
+      soil: {
+        till: () => {
+          if (gameSelectedTool !== "hoe") {
+            showNotification("❌ Equipe TOOLS.HOE");
+            return false;
+          }
+          const x = gamePlayer.tileX,
+            y = gamePlayer.tileY;
+          if (gameMap[y][x] === TILE_GRASS) {
+            gameMap[y][x] = TILE_TILLED;
+            showNotification("⛏️ Terra arada!");
+            broadcastAction({ action: "till", tileX: x, tileY: y });
+            return true;
+          }
+          showNotification("❌ Só grama.");
+          return false;
+        },
+        isTilled: () =>
+          gameMap[gamePlayer.tileY] &&
+          gameMap[gamePlayer.tileY][gamePlayer.tileX] === TILE_TILLED,
+      },
+      crops: {
+        plant: (crop) => {
+          const x = gamePlayer.tileX,
+            y = gamePlayer.tileY;
+          if (gameMap[y][x] !== TILE_TILLED) {
+            showNotification("❌ Are primeiro.");
+            return false;
+          }
+          if (gameCrops[`${x},${y}`]) {
+            showNotification("❌ Já tem planta.");
+            return false;
+          }
+          const ci = Object.keys(CROP_NAMES).indexOf(crop);
+          if (ci === -1) {
+            showNotification("❌ Use CROPS.WHEAT etc.");
+            return false;
+          }
+          gameSelectedCrop = ci;
+          gameSelectedTool = null;
+          updateGameHotbar();
+          gameCrops[`${x},${y}`] = {
+            type: ci,
+            timer: 0,
+            ready: false,
+            growTime: Object.values(CROP_GROW_TIMES)[ci],
+          };
+          showNotification(`🌱 Plantou ${CROP_NAMES[crop]}!`);
+          broadcastAction({
+            action: "plant",
+            tileX: x,
+            tileY: y,
+            cropType: ci,
+          });
+          return true;
+        },
+        water: () => {
+          if (!gameHasWateringCan) {
+            showNotification("❌ Regador Nv.3");
+            return false;
+          }
+          if (gamePlayerWater <= 0) {
+            showNotification("💧 Vazio!");
+            return false;
+          }
+          const x = gamePlayer.tileX,
+            y = gamePlayer.tileY,
+            k = `${x},${y}`;
+          if (gameCrops[k] && !gameCrops[k].ready) {
+            gameCrops[k].timer += 30;
+            gamePlayerWater--;
+            updateGameWaterBar();
+            showNotification("💦 Regou!");
+            broadcastAction({ action: "water", tileX: x, tileY: y });
+            return true;
+          }
+          showNotification("❌ Nada para regar.");
+          return false;
+        },
+        harvest: () => {
+          const x = gamePlayer.tileX,
+            y = gamePlayer.tileY,
+            k = `${x},${y}`;
+          if (gameCrops[k] && gameCrops[k].ready) {
+            gamePlayerXP += 20;
+            updateLevel();
+            delete gameCrops[k];
+            gamePlayerCoins += 10;
+            showNotification("🌾 Colheu! +20 XP");
+            broadcastAction({ action: "harvest", tileX: x, tileY: y });
+            return true;
+          }
+          if (
+            gameMap[y][x] === TILE_FRUIT_TREE &&
+            gameFruitTreeTimers[k] >= 300
+          ) {
+            gamePlayerXP += 50;
+            updateLevel();
+            gameFruitTreeTimers[k] = 0;
+            gamePlayerCoins += 25;
+            showNotification("🍎 Frutas! +50 XP");
+            return "fruit";
+          }
+          showNotification("❌ Nada pronto.");
+          return false;
+        },
+        isReady: () => {
+          const k = `${gamePlayer.tileX},${gamePlayer.tileY}`;
+          return gameCrops[k] && gameCrops[k].ready;
+        },
+      },
+      animals: {
+        feed: (name) => {
+          const n = gameWildAnimals.find(
+            (a) =>
+              a.name === name &&
+              Math.hypot(gamePlayer.x - a.x, gamePlayer.y - a.y) < 1.5,
+          );
+          if (!n) {
+            showNotification("❌ Animal não encontrado.");
+            return false;
+          }
+          gamePlayerXP += 30;
+          updateLevel();
+          n.fed = true;
+          n.feedCount++;
+          spawnHearts(n.x, n.y, 4);
+          showNotification(`🐾 ${n.name} alimentado! +30 XP`);
+          if (n.feedCount >= 2 && n.stage < 2) {
+            n.stage++;
+            n.feedCount = 0;
+            n.growthStart =
+              Date.now() - (n.stage === 1 ? GROWTH_STAGE1 : GROWTH_STAGE2);
+            showNotification(`🌟 ${n.name} cresceu!`);
+            spawnHearts(n.x, n.y, 10);
+          }
+          return true;
+        },
+        lead: () => {
+          const n = getNearestAnimal();
+          if (n && Math.hypot(gamePlayer.x - n.x, gamePlayer.y - n.y) < 1.5) {
+            n.isLeashed = true;
+            showNotification(`🔗 ${n.name} preso!`);
+            return n.name;
+          }
+          return false;
+        },
+        release: () => {
+          let f = false;
+          gameWildAnimals.forEach((a) => {
+            if (a.isLeashed) {
+              a.isLeashed = false;
+              a.targetX = a.x;
+              a.targetY = a.y;
+              f = true;
+            }
+          });
+          showNotification(f ? "🔓 Solto!" : "❌ Nenhum preso.");
+          return f;
+        },
+        collect: () => {
+          const n = getNearestAnimal();
+          if (
+            n &&
+            n.stage === 2 &&
+            Math.hypot(gamePlayer.x - n.x, gamePlayer.y - n.y) < 1.5
+          ) {
+            gamePlayerXP += 60;
+            updateLevel();
+            gamePlayerCoins += 30;
+            showNotification("🥚 +60 XP +30💰");
+            spawnHearts(n.x, n.y, 5);
+            return n.name;
+          }
+          return false;
+        },
+        getNearest: () => {
+          const n = getNearestAnimal();
+          return n ? { name: n.name, stage: n.stage } : null;
+        },
+      },
+      buildings: {
+        place: () => {
+          if (!gamePendingBuilding) {
+            showNotification("❌ Compre algo.");
+            return false;
+          }
+          const tx = gamePlayer.tileX,
+            ty = gamePlayer.tileY;
+          if (
+            !isWalkable(tx, ty) ||
+            (gameMap[ty][tx] !== TILE_GRASS && gameMap[ty][tx] !== TILE_TILLED)
+          ) {
+            showNotification("❌ Local inválido.");
+            return false;
+          }
+          const type = gamePendingBuilding.type;
+          if (type === "fence") gameMap[ty][tx] = TILE_FENCE;
+          else if (type === "lamppost") gameMap[ty][tx] = TILE_LAMPPOST;
+          else if (type === "well") gameMap[ty][tx] = TILE_WELL;
+          else
+            gameBuildings.push({
+              x: tx,
+              y: ty,
+              type,
+              startTime: Date.now(),
+              progress: 0,
+              isReady: false,
+            });
+          showNotification(`✅ ${type} colocado!`);
+          broadcastAction({
+            action: "placeBuilding",
+            tileX: tx,
+            tileY: ty,
+            buildingType: type,
+          });
+          gamePendingBuilding = null;
+          return true;
+        },
+        use: () => {
+          const b = getNearestBuilding();
+          if (b && b.isReady) {
+            gamePlayerXP += 40;
+            updateLevel();
+            gamePlayerCoins += 20;
+            showNotification("🏠 +40 XP +20💰");
+            return b.type;
+          }
+          return false;
+        },
+        destroy: () => {
+          const b = getNearestBuilding();
+          if (b) {
+            gameBuildings = gameBuildings.filter((i) => i !== b);
+            showNotification("💥 Removida!");
+            return b.type;
+          }
+          return false;
+        },
+      },
+      tools: {
+        equip: (tool) => {
+          if (tool === "hoe") {
+            gameSelectedTool = "hoe";
+            gameSelectedCrop = -1;
+            updateGameHotbar();
+            return true;
+          }
+          if (tool === "leash") {
+            gameSelectedTool = "leash";
+            gameSelectedCrop = -1;
+            updateGameHotbar();
+            return true;
+          }
+          if (tool === "wateringcan") {
+            if (!gameHasWateringCan) {
+              showNotification("🔒 Nv.3");
+              return false;
+            }
+            gameSelectedTool = "wateringcan";
+            gameSelectedCrop = -1;
+            updateGameHotbar();
+            return true;
+          }
+          if (tool === "boots") {
+            if (!gameHasBoots) {
+              showNotification("🔒 Nv.4");
+              return false;
+            }
+            gameSelectedTool = "boots";
+            gameSelectedCrop = -1;
+            updateGameHotbar();
+            return true;
+          }
+          return false;
+        },
+        getWater: () => {
+          const nw =
+            gameMap[gamePlayer.tileY] &&
+            gameMap[gamePlayer.tileY][gamePlayer.tileX] === TILE_WELL;
+          const nwb = gameBuildings.some(
+            (b) =>
+              b.type === "well" &&
+              Math.hypot(
+                gamePlayer.x - (b.x + 0.5),
+                gamePlayer.y - (b.y + 0.5),
+              ) < 1.5,
+          );
+          if (nw || nwb) {
+            gamePlayerWater = MAX_WATER;
+            updateGameWaterBar();
+            showNotification("💧 Cheio!");
+            return true;
+          }
+          return false;
+        },
+      },
+      player: {
+        moveRight: () => movePlayerRelative(0, 1),
+        moveLeft: () => movePlayerRelative(0, -1),
+        moveUp: () => movePlayerRelative(-1, 0),
+        moveDown: () => movePlayerRelative(1, 0),
+        getPosition: () => ({ x: gamePlayer.tileX, y: gamePlayer.tileY }),
+        getLevel: () => gamePlayerLevel,
+        getXP: () => gamePlayerXP,
+        getCoins: () => gamePlayerCoins,
+        isMoving: () => gamePlayer.moving,
+      },
+      weather: {
+        setDay: () => {
+          gameTimeOffset = getTimeToPeriod("DIA");
+          showNotification("☀️ Dia");
+        },
+        setAfternoon: () => {
+          gameTimeOffset = getTimeToPeriod("TARDE");
+          showNotification("🌅 Tarde");
+        },
+        setNight: () => {
+          gameTimeOffset = getTimeToPeriod("NOITE");
+          showNotification("🌙 Noite");
+        },
+        setAuto: () => {
+          gameTimeOffset = 0;
+          showNotification("🔄 Automático");
+        },
+        sleep: () => {
+          skipToNextPeriod();
+        },
+        getCurrent: () => getCurrentWeather(),
+      },
+      wait: (ms) => new Promise((r) => setTimeout(r, ms)),
+    };
+
+    window.till = () => window.farm.soil.till();
+    window.water = () => window.farm.crops.water();
+    window.plant = (c) => window.farm.crops.plant(c);
+    window.harvest = () => window.farm.crops.harvest();
+    window.feedAnimal = (n) => window.farm.animals.feed(n);
+    window.leadAnimal = () => window.farm.animals.lead();
+    window.releaseAnimal = () => window.farm.animals.release();
+    window.collectAnimal = () => window.farm.animals.collect();
+    window.placeBuilding = () => window.farm.buildings.place();
+    window.useBuilding = () => window.farm.buildings.use();
+    window.destroyBuilding = () => window.farm.buildings.destroy();
+    window.getWater = () => window.farm.tools.getWater();
+    window.sleep = () => window.farm.weather.sleep();
+    window.wait = (ms) => window.farm.wait(ms);
+    window.moveRight = () => window.farm.player.moveRight();
+    window.moveLeft = () => window.farm.player.moveLeft();
+    window.moveUp = () => window.farm.player.moveUp();
+    window.moveDown = () => window.farm.player.moveDown();
+    window.setDia = () => window.farm.weather.setDay();
+    window.setTarde = () => window.farm.weather.setAfternoon();
+    window.setNoite = () => window.farm.weather.setNight();
+    window.setAutoClima = () => window.farm.weather.setAuto();
+
+    function getTimeToPeriod(t) {
+      const e = (Date.now() + gameTimeOffset) % CYCLE_TOTAL;
+      if (t === "DIA") return gameTimeOffset - e;
+      if (t === "TARDE") return gameTimeOffset - e + 30 * MINUTE_MS;
+      if (t === "NOITE") return gameTimeOffset - e + 40 * MINUTE_MS;
+      return gameTimeOffset;
+    }
+    function getCurrentWeather() {
+      const e =
+        ((Date.now() % CYCLE_TOTAL) + gameTimeOffset + CYCLE_TOTAL) %
+        CYCLE_TOTAL;
+      if (e < 30 * MINUTE_MS) return "DIA";
+      if (e < 40 * MINUTE_MS) return "TARDE";
+      return "NOITE";
+    }
+    function skipToNextPeriod() {
+      const e =
+        ((Date.now() % CYCLE_TOTAL) + gameTimeOffset + CYCLE_TOTAL) %
+        CYCLE_TOTAL;
+      if (e < 30 * MINUTE_MS) gameTimeOffset += 30 * MINUTE_MS - e;
+      else if (e < 40 * MINUTE_MS) gameTimeOffset += 40 * MINUTE_MS - e;
+      else gameTimeOffset += 60 * MINUTE_MS - e;
+      showNotification("💤 Descansou.");
+    }
+
+    commandInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const cmd = commandInput.value.trim();
+        commandInput.value = "";
+        if (cmd) {
+          try {
+            eval(cmd);
+          } catch (err) {
+            showNotification("❓ " + cmd);
+          }
+        }
+      }
+    });
+    window.addEventListener("keydown", (e) => {
+      if (document.getElementById("editor-modal").style.display === "block")
+        return;
+      if (document.getElementById("shop-modal").style.display === "block")
+        return;
+      if (document.getElementById("friends-modal").style.display === "block")
+        return;
+      if (document.getElementById("levelup-modal").style.display === "block") {
+        if (e.key === "Enter" || e.key === "Escape")
+          document.getElementById("levelup-modal").style.display = "none";
+        return;
+      }
+      if (document.activeElement === commandInput) return;
+      if (e.key === "0") {
+        gameSelectedCrop = -1;
+        gameSelectedTool = null;
+        updateGameHotbar();
+        e.preventDefault();
+      }
+      if (e.key === "1") {
+        gameSelectedCrop = 0;
+        gameSelectedTool = null;
+        updateGameHotbar();
+      }
+      if (e.key === "2") {
+        gameSelectedCrop = 1;
+        gameSelectedTool = null;
+        updateGameHotbar();
+      }
+      if (e.key === "3") {
+        gameSelectedCrop = 2;
+        gameSelectedTool = null;
+        updateGameHotbar();
+      }
+      if (e.key === "4") {
+        gameSelectedCrop = 3;
+        gameSelectedTool = null;
+        updateGameHotbar();
+      }
+      if (e.key === "5") {
+        gameSelectedTool = gameSelectedTool === "leash" ? null : "leash";
+        if (gameSelectedTool === "leash") gameSelectedCrop = -1;
+        updateGameHotbar();
+        e.preventDefault();
+      }
+      if (e.key === "6") {
+        if (!gameHasWateringCan) {
+          showNotification("🔒 Nível 3");
+          return;
+        }
+        gameSelectedTool =
+          gameSelectedTool === "wateringcan" ? null : "wateringcan";
+        if (gameSelectedTool === "wateringcan") gameSelectedCrop = -1;
+        updateGameHotbar();
+        e.preventDefault();
+      }
+      if (e.key === "7") {
+        gameSelectedTool = gameSelectedTool === "hoe" ? null : "hoe";
+        if (gameSelectedTool === "hoe") gameSelectedCrop = -1;
+        updateGameHotbar();
+        e.preventDefault();
+      }
+      if (e.key === "8") {
+        if (!gameHasBoots) {
+          showNotification("🔒 Nível 4");
+          return;
+        }
+        gameSelectedTool = gameSelectedTool === "boots" ? null : "boots";
+        if (gameSelectedTool === "boots") gameSelectedCrop = -1;
+        updateGameHotbar();
+        e.preventDefault();
+      }
+    });
+
     function update() {
-      time++;
-      if (player.moving) {
-        const e = performance.now() - player.moveStartTime,
+      gameTime++;
+      if (gamePlayer.moving) {
+        const e = performance.now() - gamePlayer.moveStartTime,
           p = Math.min(e / MOVE_DURATION, 1);
-        player.x =
-          player.moveStartX + (player.moveTargetX - player.moveStartX) * p;
-        player.y =
-          player.moveStartY + (player.moveTargetY - player.moveStartY) * p;
+        gamePlayer.x =
+          gamePlayer.moveStartX +
+          (gamePlayer.moveTargetX - gamePlayer.moveStartX) * p;
+        gamePlayer.y =
+          gamePlayer.moveStartY +
+          (gamePlayer.moveTargetY - gamePlayer.moveStartY) * p;
         if (p >= 1) {
-          player.x = player.moveTargetX;
-          player.y = player.moveTargetY;
+          gamePlayer.x = gamePlayer.moveTargetX;
+          gamePlayer.y = gamePlayer.moveTargetY;
           advanceToNextTile();
         }
       }
-      for (let k in crops) {
-        const c = crops[k];
+      for (let k in gameCrops) {
+        const c = gameCrops[k];
         if (!c.ready && c.timer < c.growTime) c.timer += 1;
         if (c.timer >= c.growTime) c.ready = true;
       }
-      for (let k in fruitTreeTimers) {
-        if (fruitTreeTimers[k] < 300) fruitTreeTimers[k] += 1;
+      for (let k in gameFruitTreeTimers) {
+        if (gameFruitTreeTimers[k] < 300) gameFruitTreeTimers[k] += 1;
       }
-      wildAnimals.forEach((a) => {
+      gameWildAnimals.forEach((a) => {
         const ns = getAnimalStage(a);
         if (ns !== a.stage) a.stage = ns;
-        const d = Math.hypot(player.x - a.x, player.y - a.y);
+        const d = Math.hypot(gamePlayer.x - a.x, gamePlayer.y - a.y);
         if (a.isLeashed) {
-          const dx = player.x - a.x,
-            dy = player.y - a.y,
+          const dx = gamePlayer.x - a.x,
+            dy = gamePlayer.y - a.y,
             od = Math.hypot(dx, dy);
           if (od > 1.8) {
             a.x += (dx / od) * PLAYER_SPEED * 0.85;
@@ -2108,10 +2050,26 @@
           a.targetY = a.y;
           a.isInteracting = false;
           a.promptTimer = 0;
-        } else if (d < 1.2 && !player.moving) {
+        } else if (d < 1.2 && !gamePlayer.moving) {
           a.isInteracting = true;
-          setFacing(player, a);
-          setFacing(a, player);
+          const dx = gamePlayer.x - a.x,
+            dy = gamePlayer.y - a.y;
+          a.dir =
+            Math.abs(dx) > Math.abs(dy)
+              ? dx > 0
+                ? "right"
+                : "left"
+              : dy > 0
+                ? "front"
+                : "back";
+          gamePlayer.dir =
+            Math.abs(dx) > Math.abs(dy)
+              ? dx > 0
+                ? "left"
+                : "right"
+              : dy > 0
+                ? "back"
+                : "front";
           a.promptTimer++;
         } else {
           a.isInteracting = false;
@@ -2141,37 +2099,40 @@
         }
         if (a.fed) a.fed = false;
       });
-      if (!player.moving && !pendingBuilding) checkNearbyInteraction();
-      floatingHearts.forEach((h) => {
+      if (!gamePlayer.moving && !gamePendingBuilding) checkNearbyInteraction();
+      gameFloatingHearts.forEach((h) => {
         h.timer--;
         h.offsetY -= 0.02;
       });
-      floatingHearts = floatingHearts.filter((h) => h.timer > 0);
-      document.getElementById("leashDisplay").textContent = wildAnimals.some(
-        (a) => a.isLeashed,
-      )
-        ? "🔗 Animais na corda"
-        : "";
-      buildings.forEach((b) => {
+      gameFloatingHearts = gameFloatingHearts.filter((h) => h.timer > 0);
+      document.getElementById("leashDisplay").textContent =
+        gameWildAnimals.some((a) => a.isLeashed) ? "🔗 Animais na corda" : "";
+      gameBuildings.forEach((b) => {
         if (!b.isReady) {
           const e = Date.now() - b.startTime;
           b.progress = Math.min(e / BUILD_TIME, 1);
           if (b.progress >= 1) b.isReady = true;
         }
       });
-      const tcx = player.x - canvas.width / TILE_SIZE / 2,
-        tcy = player.y - canvas.height / TILE_SIZE / 2;
-      camX += (tcx - camX) * 0.12;
-      camY += (tcy - camY) * 0.12;
-      camX = Math.max(0, Math.min(MAP_W - canvas.width / TILE_SIZE, camX));
-      camY = Math.max(0, Math.min(MAP_H - canvas.height / TILE_SIZE, camY));
+      const tcx = gamePlayer.x - canvas.width / TILE_SIZE / 2,
+        tcy = gamePlayer.y - canvas.height / TILE_SIZE / 2;
+      gameCamX += (tcx - gameCamX) * 0.12;
+      gameCamY += (tcy - gameCamY) * 0.12;
+      gameCamX = Math.max(
+        0,
+        Math.min(MAP_W - canvas.width / TILE_SIZE, gameCamX),
+      );
+      gameCamY = Math.max(
+        0,
+        Math.min(MAP_H - canvas.height / TILE_SIZE, gameCamY),
+      );
       document.getElementById("timeDisplay").textContent =
         getCurrentWeather() === "DIA"
           ? "☀️ Dia"
           : getCurrentWeather() === "TARDE"
             ? "🌅 Tarde"
             : "🌙 Noite";
-      if (Math.floor(time) % 10 === 0) broadcastPosition();
+      if (Math.floor(gameTime) % 10 === 0) broadcastPosition();
     }
 
     function draw() {
@@ -2192,21 +2153,34 @@
       }
       ctx.fillStyle = sc;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      const sx = Math.floor(camX),
-        sy = Math.floor(camY),
-        ex = Math.ceil(camX + canvas.width / TILE_SIZE) + 1,
-        ey = Math.ceil(camY + canvas.height / TILE_SIZE) + 1;
+      const sx = Math.floor(gameCamX),
+        sy = Math.floor(gameCamY),
+        ex = Math.ceil(gameCamX + canvas.width / TILE_SIZE) + 1,
+        ey = Math.ceil(gameCamY + canvas.height / TILE_SIZE) + 1;
       for (let y = sy; y < ey; y++)
         for (let x = sx; x < ex; x++) {
           if (x < 0 || x >= MAP_W || y < 0 || y >= MAP_H) continue;
-          const px = (x - camX) * TILE_SIZE,
-            py = (y - camY) * TILE_SIZE,
-            tile = map[y][x];
+          const px = (x - gameCamX) * TILE_SIZE,
+            py = (y - gameCamY) * TILE_SIZE,
+            tile = gameMap[y][x];
           if (tile === TILE_TILLED) {
             ctx.fillStyle = "#8B6914";
             ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
           } else if (tile === TILE_WELL) {
-            drawWell(px, py);
+            ctx.fillStyle = "#7a7a7a";
+            ctx.fillRect(
+              px + TILE_SIZE * 0.2,
+              py + TILE_SIZE * 0.35,
+              TILE_SIZE * 0.6,
+              TILE_SIZE * 0.55,
+            );
+            ctx.fillStyle = "#4488cc";
+            ctx.fillRect(
+              px + TILE_SIZE * 0.28,
+              py + TILE_SIZE * 0.45,
+              TILE_SIZE * 0.44,
+              TILE_SIZE * 0.35,
+            );
           } else {
             ctx.fillStyle = tile === TILE_RIVER ? "#3b7dd8" : gc;
             ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
@@ -2217,22 +2191,88 @@
             ctx.fillRect(px + 2, py + TILE_SIZE * 0.6, TILE_SIZE - 4, 4);
           }
           if (tile === TILE_LAMPPOST) {
-            drawLamppost(px, py, weather);
+            ctx.fillStyle = "#666";
+            ctx.fillRect(
+              px + TILE_SIZE * 0.44,
+              py + TILE_SIZE * 0.2,
+              TILE_SIZE * 0.12,
+              TILE_SIZE * 0.4,
+            );
+            ctx.fillStyle = "#FFD700";
+            ctx.fillRect(
+              px + TILE_SIZE * 0.57,
+              py + TILE_SIZE * 0.04,
+              TILE_SIZE * 0.16,
+              TILE_SIZE * 0.14,
+            );
           }
-          if (tile === TILE_TREE && tile !== TILE_TILLED) {
-            drawTree(px, py);
+          if (tile === TILE_TREE) {
+            ctx.fillStyle = "#5C3D1F";
+            ctx.fillRect(
+              px + TILE_SIZE * 0.35,
+              py + TILE_SIZE * 0.45,
+              TILE_SIZE * 0.3,
+              TILE_SIZE * 0.5,
+            );
+            ctx.fillStyle = "#1B5E1B";
+            ctx.beginPath();
+            ctx.arc(
+              px + TILE_SIZE * 0.5,
+              py + TILE_SIZE * 0.2,
+              TILE_SIZE * 0.35,
+              0,
+              Math.PI * 2,
+            );
+            ctx.fill();
           }
-          if (tile === TILE_BUSH && tile !== TILE_TILLED) drawBush(px, py);
+          if (tile === TILE_BUSH) {
+            ctx.fillStyle = "#3a7d3a";
+            ctx.beginPath();
+            ctx.arc(
+              px + TILE_SIZE * 0.5,
+              py + TILE_SIZE * 0.55,
+              TILE_SIZE * 0.3,
+              0,
+              Math.PI * 2,
+            );
+            ctx.fill();
+          }
           if (tile === TILE_FRUIT_TREE) {
-            drawFruitTree(px, py, `${x},${y}`);
+            ctx.fillStyle = "#5C3D1F";
+            ctx.fillRect(
+              px + TILE_SIZE * 0.35,
+              py + TILE_SIZE * 0.45,
+              TILE_SIZE * 0.3,
+              TILE_SIZE * 0.5,
+            );
+            ctx.fillStyle = "#1B5E1B";
+            ctx.beginPath();
+            ctx.arc(
+              px + TILE_SIZE * 0.5,
+              py + TILE_SIZE * 0.2,
+              TILE_SIZE * 0.35,
+              0,
+              Math.PI * 2,
+            );
+            ctx.fill();
+            ctx.fillStyle =
+              gameFruitTreeTimers[`${x},${y}`] >= 300 ? "#ff3333" : "#888";
+            ctx.beginPath();
+            ctx.arc(
+              px + TILE_SIZE * 0.6,
+              py + TILE_SIZE * 0.15,
+              TILE_SIZE * 0.12,
+              0,
+              Math.PI * 2,
+            );
+            ctx.fill();
           }
-          if (tile === TILE_RIVER) drawRiver(px, py);
         }
-      for (let k in crops) {
+      for (let k in gameCrops) {
         const [x, y] = k.split(",").map(Number),
-          px = (x - camX) * TILE_SIZE,
-          py = (y - camY) * TILE_SIZE,
-          c = crops[k],
+          px = (x - gameCamX) * TILE_SIZE,
+          py = (y - gameCamY) * TILE_SIZE,
+          c = gameCrops[k],
           prog = Math.min(c.timer / c.growTime, 1),
           stage = Math.floor(prog * 3);
         ctx.fillStyle = ["#90EE90", "#ADFF2F", "#FFD700", "#FF8C00"][stage];
@@ -2248,22 +2288,40 @@
           ctx.fillText("★", px + TILE_SIZE * 0.35, py + TILE_SIZE * 0.25);
         }
       }
-      buildings.forEach((b) => {
-        const px = (b.x - camX) * TILE_SIZE,
-          py = (b.y - camY) * TILE_SIZE;
+      gameBuildings.forEach((b) => {
+        const px = (b.x - gameCamX) * TILE_SIZE,
+          py = (b.y - gameCamY) * TILE_SIZE;
         if (!b.isReady) {
           ctx.fillStyle = "gray";
           ctx.fillRect(px, py - 10, TILE_SIZE, 5);
           ctx.fillStyle = "lime";
           ctx.fillRect(px, py - 10, TILE_SIZE * b.progress, 5);
         } else {
-          if (b.type === "well") drawWell(px, py);
-          else drawBarnOrSilo(px, py, b.type);
+          if (b.type === "well") {
+            ctx.fillStyle = "#7a7a7a";
+            ctx.fillRect(
+              px + TILE_SIZE * 0.2,
+              py + TILE_SIZE * 0.35,
+              TILE_SIZE * 0.6,
+              TILE_SIZE * 0.55,
+            );
+          } else if (b.type === "barn") {
+            ctx.fillStyle = "#8B4513";
+            ctx.fillRect(px + 4, py + 4, TILE_SIZE - 8, TILE_SIZE - 4);
+          } else {
+            ctx.fillStyle = "#A9A9A9";
+            ctx.fillRect(
+              px + TILE_SIZE * 0.2,
+              py + TILE_SIZE * 0.1,
+              TILE_SIZE * 0.6,
+              TILE_SIZE * 0.8,
+            );
+          }
         }
       });
-      wildAnimals.forEach((a) => {
-        const px = (a.x - camX) * TILE_SIZE,
-          py = (a.y - camY) * TILE_SIZE,
+      gameWildAnimals.forEach((a) => {
+        const px = (a.x - gameCamX) * TILE_SIZE,
+          py = (a.y - gameCamY) * TILE_SIZE,
           sizeScale = [0.5, 0.75, 1][a.stage];
         ctx.font = `${TILE_SIZE * 0.5 * sizeScale}px "Press Start 2P"`;
         ctx.fillText(a.type, px + TILE_SIZE * 0.15, py + TILE_SIZE * 0.7);
@@ -2272,8 +2330,8 @@
           ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.moveTo(
-            (player.x - camX) * TILE_SIZE + TILE_SIZE / 2,
-            (player.y - camY) * TILE_SIZE + TILE_SIZE / 2,
+            (gamePlayer.x - gameCamX) * TILE_SIZE + TILE_SIZE / 2,
+            (gamePlayer.y - gameCamY) * TILE_SIZE + TILE_SIZE / 2,
           );
           ctx.lineTo(px + TILE_SIZE / 2, py + TILE_SIZE / 2);
           ctx.stroke();
@@ -2282,8 +2340,8 @@
       });
       for (let id in remotePlayers) {
         const rp = remotePlayers[id];
-        const rpx = (rp.x - camX) * TILE_SIZE,
-          rpy = (rp.y - camY) * TILE_SIZE;
+        const rpx = (rp.x - gameCamX) * TILE_SIZE,
+          rpy = (rp.y - gameCamY) * TILE_SIZE;
         ctx.fillStyle = "#ff6347";
         ctx.font = `${TILE_SIZE * 0.6}px "Press Start 2P"`;
         ctx.fillText("👤", rpx + TILE_SIZE * 0.15, rpy + TILE_SIZE * 0.8);
@@ -2291,13 +2349,13 @@
         ctx.font = `${TILE_SIZE * 0.2}px "Press Start 2P"`;
         ctx.fillText(rp.name || "?", rpx + TILE_SIZE * 0.1, rpy - 5);
       }
-      const ppx = (player.x - camX) * TILE_SIZE,
-        ppy = (player.y - camY) * TILE_SIZE;
+      const ppx = (gamePlayer.x - gameCamX) * TILE_SIZE,
+        ppy = (gamePlayer.y - gameCamY) * TILE_SIZE;
       ctx.fillStyle = "#3b5998";
       ctx.font = `${TILE_SIZE * 0.7}px "Press Start 2P"`;
       ctx.fillText("🧑‍🌾", ppx + TILE_SIZE * 0.1, ppy + TILE_SIZE * 0.8);
       if (!isHost && roomId && !worldReceived) {
-        ctx.fillStyle = "rgba(0,0,0,0.8)";
+        ctx.fillStyle = "rgba(0,0,0,0.6)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = "#ffd700";
         ctx.font = '16px "Press Start 2P"';
@@ -2320,152 +2378,41 @@
       }
     }
 
-    function drawWell(px, py) {
-      const s = TILE_SIZE;
-      ctx.fillStyle = "#7a7a7a";
-      ctx.fillRect(px + s * 0.2, py + s * 0.35, s * 0.6, s * 0.55);
-      ctx.fillStyle = "#4488cc";
-      ctx.fillRect(px + s * 0.28, py + s * 0.45, s * 0.44, s * 0.35);
-      ctx.fillStyle = "#5C3D1F";
-      ctx.fillRect(px + s * 0.18, py + s * 0.1, s * 0.08, s * 0.3);
-      ctx.fillRect(px + s * 0.74, py + s * 0.1, s * 0.08, s * 0.3);
-      ctx.fillStyle = "#A0522D";
-      ctx.beginPath();
-      ctx.moveTo(px + s * 0.1, py + s * 0.1);
-      ctx.lineTo(px + s * 0.5, py - s * 0.1);
-      ctx.lineTo(px + s * 0.9, py + s * 0.1);
-      ctx.fill();
-    }
-    function drawLamppost(px, py, weather) {
-      const s = TILE_SIZE;
-      ctx.fillStyle = "#666";
-      ctx.fillRect(px + s * 0.44, py + s * 0.2, s * 0.12, s * 0.4);
-      ctx.fillStyle = "#FFD700";
-      ctx.fillRect(px + s * 0.57, py + s * 0.04, s * 0.16, s * 0.14);
-      if (weather === "NOITE") {
-        const glow = ctx.createRadialGradient(
-          px + s * 0.65,
-          py + s * 0.1,
-          s * 0.05,
-          px + s * 0.65,
-          py + s * 0.1,
-          s * 3.5,
-        );
-        glow.addColorStop(0, "rgba(255,255,160,0.8)");
-        glow.addColorStop(0.2, "rgba(255,255,120,0.5)");
-        glow.addColorStop(0.5, "rgba(255,220,60,0.15)");
-        glow.addColorStop(1, "rgba(255,200,50,0)");
-        ctx.fillStyle = glow;
-        ctx.fillRect(px - s * 3, py - s * 3, s * 7, s * 7);
-      }
-    }
-    function drawBarnOrSilo(px, py, type) {
-      if (type === "barn") {
-        ctx.fillStyle = "#8B4513";
-        ctx.fillRect(px + 4, py + 4, TILE_SIZE - 8, TILE_SIZE - 4);
-        ctx.fillStyle = "#A0522D";
-        ctx.fillRect(px + 6, py + 6, TILE_SIZE - 12, TILE_SIZE - 10);
-        ctx.fillStyle = "#CD853F";
-        ctx.beginPath();
-        ctx.moveTo(px, py + 6);
-        ctx.lineTo(px + TILE_SIZE / 2, py - TILE_SIZE * 0.35);
-        ctx.lineTo(px + TILE_SIZE, py + 6);
-        ctx.fill();
-      } else {
-        ctx.fillStyle = "#A9A9A9";
-        ctx.fillRect(
-          px + TILE_SIZE * 0.2,
-          py + TILE_SIZE * 0.1,
-          TILE_SIZE * 0.6,
-          TILE_SIZE * 0.8,
-        );
-        ctx.fillStyle = "#C0C0C0";
-        ctx.beginPath();
-        ctx.arc(
-          px + TILE_SIZE / 2,
-          py + TILE_SIZE * 0.1,
-          TILE_SIZE * 0.3,
-          Math.PI,
-          0,
-        );
-        ctx.fill();
-      }
-    }
-    function drawTree(sx, sy) {
-      const s = TILE_SIZE;
-      ctx.fillStyle = "#5C3D1F";
-      ctx.fillRect(sx + s * 0.35, sy + s * 0.45, s * 0.3, s * 0.5);
-      ctx.fillStyle = "#1B5E1B";
-      ctx.beginPath();
-      ctx.arc(sx + s * 0.5, sy + s * 0.2, s * 0.35, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    function drawBush(sx, sy) {
-      const s = TILE_SIZE;
-      ctx.fillStyle = "#3a7d3a";
-      ctx.beginPath();
-      ctx.arc(sx + s * 0.5, sy + s * 0.55, s * 0.3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    function drawFruitTree(sx, sy, key) {
-      drawTree(sx, sy);
-      const r = fruitTreeTimers[key] >= 300;
-      ctx.fillStyle = r ? "#ff3333" : "#888";
-      ctx.beginPath();
-      ctx.arc(
-        sx + TILE_SIZE * 0.6,
-        sy + TILE_SIZE * 0.15,
-        TILE_SIZE * 0.12,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fill();
-    }
-    function drawRiver(sx, sy) {
-      ctx.fillStyle = "#5aa9e6";
-      ctx.fillRect(
-        sx + TILE_SIZE * 0.1,
-        sy + TILE_SIZE * 0.1,
-        TILE_SIZE * 0.8,
-        TILE_SIZE * 0.8,
-      );
-    }
-
-    const editorModal = document.getElementById("editor-modal"),
-      codeEditor = document.getElementById("codeEditor");
-    document
-      .getElementById("open-editor-btn")
-      .addEventListener("click", () => (editorModal.style.display = "block"));
-    document
-      .getElementById("close-editor")
-      .addEventListener("click", () => (editorModal.style.display = "none"));
-    document.getElementById("runBtn").addEventListener("click", async () => {
-      const code = codeEditor.value.trim();
-      if (!code) return;
-      try {
-        await eval(`(async()=>{try{${code}}catch(e){throw e;}})();`);
-        logToConsole("✅ Código executado.");
-      } catch (e) {
-        logToConsole("❌ Erro: " + e.message);
-      }
-    });
-    document.getElementById("exampleBtn").addEventListener("click", () => {
-      codeEditor.value = `farm.tools.equip(TOOLS.HOE);\nfor (let i=0;i<3;i++) {\n    farm.soil.till();\n    farm.player.moveRight();\n    await farm.wait(200);\n}\nfarm.player.moveLeft(); farm.player.moveLeft(); farm.player.moveLeft();\nfor (let i=0;i<3;i++) {\n    farm.crops.plant(CROPS.WHEAT);\n    farm.crops.water();\n    farm.player.moveRight();\n    await farm.wait(200);\n}`;
-    });
-    function logToConsole(msg) {
-      document.getElementById("consoleOutput").textContent = msg;
-    }
-
     function gameLoop() {
+      if (!gameRunning) return;
       update();
       draw();
       gameLoopId = requestAnimationFrame(gameLoop);
     }
     gameLoop();
-    updateHotbar();
-    updateWaterBar();
-    updateShopUI();
+    updateGameHotbar();
+    updateGameWaterBar();
+    updateGameShopUI();
     commandInput.focus();
     showRoomCodeInGame();
   }
+
+  const editorModal = document.getElementById("editor-modal"),
+    codeEditor = document.getElementById("codeEditor");
+  document
+    .getElementById("open-editor-btn")
+    .addEventListener("click", () => (editorModal.style.display = "block"));
+  document
+    .getElementById("close-editor")
+    .addEventListener("click", () => (editorModal.style.display = "none"));
+  document.getElementById("runBtn").addEventListener("click", async () => {
+    const code = codeEditor.value.trim();
+    if (!code) return;
+    try {
+      await eval(`(async()=>{try{${code}}catch(e){throw e;}})();`);
+      document.getElementById("consoleOutput").textContent =
+        "✅ Código executado.";
+    } catch (e) {
+      document.getElementById("consoleOutput").textContent =
+        "❌ Erro: " + e.message;
+    }
+  });
+  document.getElementById("exampleBtn").addEventListener("click", () => {
+    codeEditor.value = `farm.tools.equip(TOOLS.HOE);\nfor (let i=0;i<3;i++) {\n    farm.soil.till();\n    farm.player.moveRight();\n    await farm.wait(200);\n}\nfarm.player.moveLeft(); farm.player.moveLeft(); farm.player.moveLeft();\nfor (let i=0;i<3;i++) {\n    farm.crops.plant(CROPS.WHEAT);\n    farm.crops.water();\n    farm.player.moveRight();\n    await farm.wait(200);\n}`;
+  });
 })();
