@@ -718,3 +718,102 @@ textarea {
   transform: translateY(2px);
   border-bottom-width: 1px;
 }
+
+/* NOVOS ESTILOS PARA O LOBBY DE PRONTIDÃO */
+#ready-lobby {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(20, 30, 20, 0.95);
+  border: 3px solid #ffd700;
+  border-radius: 20px;
+  padding: 30px;
+  z-index: 400;
+  display: none;
+  text-align: center;
+  min-width: 350px;
+  max-width: 90vw;
+  box-shadow: 0 0 60px rgba(0, 0, 0, 0.8);
+}
+
+#ready-lobby h3 {
+  color: #ffd700;
+  font-family: "Press Start 2P", cursive;
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+#ready-players {
+  color: #fff;
+  font-family: "Press Start 2P", cursive;
+  font-size: 9px;
+  margin-bottom: 15px;
+  line-height: 2;
+}
+
+.ready-yes {
+  color: #7cfc00;
+}
+
+.ready-no {
+  color: #ff6b6b;
+}
+
+#ready-status {
+  color: #ffa500;
+  font-family: "Press Start 2P", cursive;
+  font-size: 8px;
+  margin-bottom: 20px;
+}
+
+#ready-btn {
+  font-size: 12px;
+  padding: 14px 30px;
+  background: #7cfc00;
+  border-bottom-color: #3a7a00;
+  margin: 0 auto;
+}
+
+#ready-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.friend-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid #3a2c1b;
+}
+
+.friend-row .online {
+  color: #7cfc00;
+}
+
+.friend-row .offline {
+  color: #888;
+}
+
+.add-friend {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.add-friend input {
+  flex: 1;
+  background: rgba(15, 31, 10, 0.8);
+  border: 2px solid #3a5a2a;
+  color: #c7f0a8;
+  font-family: "Inter", sans-serif;
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  outline: none;
+}
+
+.add-friend input:focus {
+  border-color: #7cfc00;
+}

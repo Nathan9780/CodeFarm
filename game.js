@@ -1,5 +1,80 @@
 (function () {
-  // ========== VARIÁVEIS GLOBAIS DO JOGO ==========
+  // ========== CONFIGURAÇÃO DE SPRITES ==========
+  const SPRITE_CONFIG = {
+    TREE: "assets/tree.png",
+    FRUIT_TREE: "assets/fruit_tree.png",
+    APPLE: "assets/apple.png",
+    BUSH: "assets/bush.png",
+    BUSH2: "assets/bush2.png",
+    FENCE: "assets/fence.png",
+    LAMPPOST: "assets/lamppost.png",
+    WELL: "assets/well.png", // Poço
+    TILLED: "assets/till.png",
+    WATER: "assets/water.png",
+    HOE: "assets/hoe.png",
+    // ===== NOVOS SPRITES =====
+    SILO: "assets/silo.png", // Silo
+    BARN: "assets/barn.png", // Celeiro
+    HOUSE: "assets/house.png", // Casa do fazendeiro
+    LEASH: "assets/leash.png", // Corda (ícone)
+    // Animais
+    COW: "assets/cow.png",
+    CHICKEN: "assets/chicken.png",
+    CHICKEN_BABY: "assets/chick.png",
+    PIG: "assets/pig.png",
+    RABBIT: "assets/rabbit.png",
+    DUCK: "assets/duck.png",
+    USE_SPRITES: true,
+  };
+
+  const TREE_SCALE = 1.6;
+  const FRUIT_SCALE = 1.6;
+  const BUSH_SCALE = 1.5;
+
+  const spriteImages = {};
+  let spritesLoaded = false;
+
+  function loadSprites() {
+    const promises = [];
+    for (const [key, url] of Object.entries(SPRITE_CONFIG)) {
+      if (key === "USE_SPRITES") continue;
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      const p = new Promise((resolve) => {
+        img.onload = () => {
+          spriteImages[key] = img;
+          resolve();
+        };
+        img.onerror = () => {
+          console.warn(`❌ Falha ao carregar sprite: ${key} (${url})`);
+          spriteImages[key] = null;
+          resolve();
+        };
+      });
+      img.src = url;
+      promises.push(p);
+    }
+    return Promise.all(promises).then(() => {
+      spritesLoaded = true;
+      console.log("✅ Sprites carregados!");
+    });
+  }
+
+  function drawSprite(ctx, key, x, y, size) {
+    const img = spriteImages[key];
+    if (
+      SPRITE_CONFIG.USE_SPRITES &&
+      img &&
+      img.complete &&
+      img.naturalWidth > 0
+    ) {
+      ctx.drawImage(img, x, y, size, size);
+      return true;
+    }
+    return false;
+  }
+
+  // ========== VARIÁVEIS GLOBAIS ==========
   let playerName = "";
   let gameLoopId = null;
   let peer = null;
@@ -14,8 +89,8 @@
   let gameRunning = false;
   let hostReady = false;
   let guestReady = false;
+  let reconnectTimeout = null;
 
-  // Elementos DOM
   const loginScreen = document.getElementById("login-screen");
   const lobbyScreen = document.getElementById("lobby-screen");
   const roomDisplay = document.getElementById("room-display");
@@ -35,24 +110,29 @@
 
   // ========== LOBBY DE PRONTIDÃO ==========
   let readyLobby = null;
+
   function createReadyLobby() {
     if (readyLobby) return;
     readyLobby = document.createElement("div");
     readyLobby.id = "ready-lobby";
-    readyLobby.style.cssText =
-      "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(20,30,20,0.95);border:3px solid #ffd700;border-radius:20px;padding:30px;z-index:400;display:none;text-align:center;min-width:350px;box-shadow:0 0 60px rgba(0,0,0,0.8);";
     readyLobby.innerHTML = `
-            <h3 style="color:#ffd700;font-family:'Press Start 2P',cursive;font-size:14px;margin-bottom:20px;">🎮 LOBBY</h3>
-            <div id="ready-players" style="color:#fff;font-family:'Press Start 2P',cursive;font-size:9px;margin-bottom:15px;"></div>
-            <div id="ready-status" style="color:#ffa500;font-family:'Press Start 2P',cursive;font-size:8px;margin-bottom:20px;"></div>
-            <button id="ready-btn" class="btn" style="font-size:12px;padding:14px 30px;background:#7cfc00;border-bottom-color:#3a7a00;">✅ PRONTO</button>
-        `;
+      <h3>🎮 LOBBY</h3>
+      <div id="ready-players" style="color:#fff;font-family:'Press Start 2P',cursive;font-size:9px;margin-bottom:15px;line-height:2;"></div>
+      <div id="ready-status" style="color:#ffa500;font-family:'Press Start 2P',cursive;font-size:8px;margin-bottom:20px;"></div>
+      <button id="ready-btn" class="btn" style="font-size:12px;padding:14px 30px;background:#7cfc00;border-bottom-color:#3a7a00;margin:0 auto;">✅ PRONTO</button>
+    `;
     document.body.appendChild(readyLobby);
     document.getElementById("ready-btn").addEventListener("click", () => {
       if (isHost) {
         hostReady = true;
         updateReadyButton();
-        if (conn && conn.open) conn.send({ type: "ready", from: playerName });
+        if (conn && conn.open) {
+          conn.send({ type: "ready", from: playerName });
+          setTimeout(() => {
+            if (conn && conn.open)
+              conn.send({ type: "ready_ack", from: "host" });
+          }, 100);
+        }
         if (guestReady) checkBothReady();
       } else {
         guestReady = true;
@@ -62,6 +142,7 @@
       }
     });
   }
+
   function updateReadyButton() {
     const btn = document.getElementById("ready-btn");
     const status = document.getElementById("ready-status");
@@ -73,22 +154,29 @@
     btn.style.background = iAmReady ? "#888" : "#7cfc00";
     btn.style.borderBottomColor = iAmReady ? "#555" : "#3a7a00";
     btn.disabled = iAmReady;
-    if (isHost) {
-      players.innerHTML = `🧑‍🌾 <span style="color:#7cfc00;">Você (Host)</span> ${hostReady ? "✅" : "⌛"}<br>👤 <span style="color:#ffa500;">Convidado</span> ${guestReady ? "✅" : "⌛"}`;
-      status.textContent = hostReady
-        ? guestReady
-          ? "🚀 Iniciando..."
-          : "Aguardando convidado..."
-        : "Clique PRONTO";
+    const hostStatus = isHost ? "Você (Host)" : "Host";
+    const guestStatus = isHost ? "Convidado" : "Você";
+    players.innerHTML = `
+      🧑‍🌾 <span style="color:#7cfc00;">${hostStatus}</span> 
+      <span class="${hostReady ? "ready-yes" : "ready-no"}">${hostReady ? "✅" : "⏳"}</span>
+      <br>
+      👤 <span style="color:#ffa500;">${guestStatus}</span> 
+      <span class="${guestReady ? "ready-yes" : "ready-no"}">${guestReady ? "✅" : "⏳"}</span>
+    `;
+    if (iAmReady && !otherReady) {
+      status.textContent = isHost
+        ? "Aguardando convidado..."
+        : "Aguardando host...";
+      status.style.color = "#ffa500";
+    } else if (iAmReady && otherReady) {
+      status.textContent = "🚀 Iniciando...";
+      status.style.color = "#7cfc00";
     } else {
-      players.innerHTML = `🧑‍🌾 <span style="color:#7cfc00;">Host</span> ${hostReady ? "✅" : "⌛"}<br>👤 <span style="color:#ffa500;">Você</span> ${guestReady ? "✅" : "⌛"}`;
-      status.textContent = guestReady
-        ? hostReady
-          ? "🚀 Iniciando..."
-          : "Aguardando host..."
-        : "Clique PRONTO";
+      status.textContent = "Clique PRONTO para começar";
+      status.style.color = "#ffd700";
     }
   }
+
   function showReadyLobby() {
     createReadyLobby();
     readyLobby.style.display = "block";
@@ -96,14 +184,20 @@
     guestReady = false;
     updateReadyButton();
   }
+
   function hideReadyLobby() {
     if (readyLobby) readyLobby.style.display = "none";
   }
+
   function checkBothReady() {
     if (hostReady && guestReady) {
       setTimeout(() => {
         hideReadyLobby();
-        if (isHost) sendWorldState();
+        if (isHost) {
+          sendWorldState();
+          setTimeout(sendWorldState, 300);
+          setTimeout(sendWorldState, 600);
+        }
         showNotification("🚀 Jogo iniciado!");
       }, 600);
     }
@@ -117,6 +211,7 @@
       .catch(() => showNotification("📋 Sala: " + roomId));
   }
   if (roomCodeDisplay) roomCodeDisplay.addEventListener("click", copyRoomCode);
+
   function showRoomCodeInGame() {
     if (roomCodeDisplay && roomCodeInline && roomId && isHost) {
       roomCodeInline.textContent = roomId;
@@ -172,6 +267,10 @@
       cancelAnimationFrame(gameLoopId);
       gameLoopId = null;
       gameRunning = false;
+    }
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
     }
     if (conn)
       try {
@@ -257,31 +356,23 @@
     multiplayerStatus.style.display = "block";
     multiplayerStatus.textContent = "🟡 Conectando...";
     multiplayerStatus.style.color = "#ffa500";
-
-    if (peer) {
+    if (peer)
       try {
         peer.destroy();
       } catch (e) {}
-    }
     conn = null;
     connectionRetries = 0;
     hostReady = false;
     guestReady = false;
-
     const hostId = "codegarden_" + room + "_host";
     const guestId = "codegarden_" + room + "_guest";
     const myId = isHost ? hostId : guestId;
-
     console.log("🆔 Meu ID:", myId, isHost ? "(HOST)" : "(GUEST)");
-
-    // Inicia o jogo imediatamente
     initGameWorld(isHost);
-
     peer = new Peer(myId, {
       debug: 1,
       config: { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] },
     });
-
     peer.on("open", (id) => {
       myPeerId = id;
       console.log("✅ Peer aberto:", id);
@@ -296,7 +387,6 @@
         setTimeout(() => tryConnect(hostId), 500);
       }
     });
-
     peer.on("connection", (incoming) => {
       console.log("📞 Conexão recebida:", incoming.peer);
       if (isHost && !conn) {
@@ -307,7 +397,6 @@
         updateReadyButton();
       }
     });
-
     peer.on("error", (err) => {
       console.error("❌ Peer error:", err);
       if (err.type === "unavailable-id") {
@@ -399,6 +488,7 @@
         map: gameMap,
         crops: gameCrops,
         buildings: gameBuildings,
+        fruitTrees: gameFruitTreeTimers,
         wildAnimals: gameWildAnimals.map((a) => ({
           x: a.x,
           y: a.y,
@@ -407,6 +497,7 @@
           name: a.name,
           feedCount: a.feedCount || 0,
           isLeashed: a.isLeashed || false,
+          growthStart: a.growthStart,
         })),
         hostName: playerName,
         roomCode: roomId,
@@ -424,7 +515,9 @@
         unlockedItems: gameUnlockedItems,
       });
       console.log("📤 Mundo enviado.");
-    } catch (e) {}
+    } catch (e) {
+      console.error("Erro ao enviar mundo:", e);
+    }
   }
 
   function setupDataChannel(c) {
@@ -461,6 +554,12 @@
               if (guestReady) checkBothReady();
             }
           }
+        } else if (data.type === "ready_ack") {
+          if (!isHost) {
+            hostReady = true;
+            updateReadyButton();
+            if (guestReady) checkBothReady();
+          }
         } else if (data.type === "worldState" && !isHost) {
           console.log("📥 RECEBENDO MUNDO...");
           if (data.map && Array.isArray(data.map) && data.map.length > 0)
@@ -468,15 +567,19 @@
           if (data.crops) gameCrops = JSON.parse(JSON.stringify(data.crops));
           if (data.buildings)
             gameBuildings = JSON.parse(JSON.stringify(data.buildings));
-          if (data.wildAnimals)
+          if (data.fruitTrees)
+            gameFruitTreeTimers = JSON.parse(JSON.stringify(data.fruitTrees));
+          if (data.wildAnimals) {
             gameWildAnimals = data.wildAnimals.map((a) => {
               const animal = createGameAnimal(a.species, a.x, a.y);
               animal.stage = a.stage || 0;
               animal.name = a.name || animal.name;
               animal.feedCount = a.feedCount || 0;
               animal.isLeashed = a.isLeashed || false;
+              animal.growthStart = a.growthStart || Date.now();
               return animal;
             });
+          }
           if (data.timeOffset !== undefined) gameTimeOffset = data.timeOffset;
           if (data.playerXP !== undefined) gamePlayerXP = data.playerXP;
           if (data.playerLevel !== undefined)
@@ -539,7 +642,18 @@
     });
     c.on("close", () => {
       multiplayerStatus.textContent = "⚫ Desconectado";
+      multiplayerStatus.style.color = "#ff6b6b";
       conn = null;
+      if (!isHost && roomId) {
+        if (reconnectTimeout) clearTimeout(reconnectTimeout);
+        reconnectTimeout = setTimeout(() => {
+          if (!conn) {
+            multiplayerStatus.textContent = "🔄 Reconectando...";
+            multiplayerStatus.style.color = "#ffa500";
+            tryConnect("codegarden_" + roomId + "_host");
+          }
+        }, 3000);
+      }
     });
   }
 
@@ -646,7 +760,6 @@
     hideLogin();
     showLobby();
   }
-
   initMultiplayer();
 
   // ========== AMIGOS ==========
@@ -722,6 +835,10 @@
   const canvas = document.getElementById("gameCanvas");
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
+
+  loadSprites().then(() => {
+    console.log("Sprites prontos para uso.");
+  });
 
   const MAP_W = 50,
     MAP_H = 40;
@@ -926,6 +1043,14 @@
             gameMap[ty][tx] = TILE_TREE;
         }
       }
+      for (let i = 0; i < 12; i++) {
+        let fx = Math.floor(Math.random() * MAP_W),
+          fy = Math.floor(Math.random() * MAP_H);
+        if (gameMap[fy][fx] === TILE_GRASS) {
+          gameMap[fy][fx] = TILE_FRUIT_TREE;
+          gameFruitTreeTimers[`${fx},${fy}`] = 0;
+        }
+      }
       for (let i = 0; i < 25; i++) {
         let cx = Math.floor(Math.random() * MAP_W),
           cy = Math.floor(Math.random() * MAP_H);
@@ -940,14 +1065,6 @@
             gameMap[by][bx] === TILE_GRASS
           )
             gameMap[by][bx] = TILE_BUSH;
-        }
-      }
-      for (let i = 0; i < 12; i++) {
-        let fx = Math.floor(Math.random() * MAP_W),
-          fy = Math.floor(Math.random() * MAP_H);
-        if (gameMap[fy][fx] === TILE_GRASS) {
-          gameMap[fy][fx] = TILE_FRUIT_TREE;
-          gameFruitTreeTimers[`${fx},${fy}`] = 0;
         }
       }
       const initSpec = [
@@ -1367,9 +1484,7 @@
           (gamePlayerWater / MAX_WATER) * 100 + "%";
         document.getElementById("water-text").textContent =
           gamePlayerWater + "/" + MAX_WATER;
-      } else {
-        c.style.display = "none";
-      }
+      } else c.style.display = "none";
     }
     function updateGameShopUI() {
       const li = document.getElementById("shop-lamppost");
@@ -1497,12 +1612,9 @@
       document.getElementById("shop-modal").style.display = "block";
       updateGameShopUI();
     });
-    document
-      .getElementById("close-shop")
-      .addEventListener(
-        "click",
-        () => (document.getElementById("shop-modal").style.display = "none"),
-      );
+    document.getElementById("close-shop").addEventListener("click", () => {
+      document.getElementById("shop-modal").style.display = "none";
+    });
     bindShopButtons();
 
     document.querySelectorAll(".hotbar-slot").forEach((s) => {
@@ -1932,6 +2044,7 @@
         }
       }
     });
+
     window.addEventListener("keydown", (e) => {
       if (document.getElementById("editor-modal").style.display === "block")
         return;
@@ -2157,117 +2270,188 @@
         sy = Math.floor(gameCamY),
         ex = Math.ceil(gameCamX + canvas.width / TILE_SIZE) + 1,
         ey = Math.ceil(gameCamY + canvas.height / TILE_SIZE) + 1;
-      for (let y = sy; y < ey; y++)
+
+      // Primeiro passo: desenhar solo e tiles
+      for (let y = sy; y < ey; y++) {
         for (let x = sx; x < ex; x++) {
           if (x < 0 || x >= MAP_W || y < 0 || y >= MAP_H) continue;
           const px = (x - gameCamX) * TILE_SIZE,
             py = (y - gameCamY) * TILE_SIZE,
             tile = gameMap[y][x];
+
+          // Solo
           if (tile === TILE_TILLED) {
-            ctx.fillStyle = "#8B6914";
-            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+            if (!drawSprite(ctx, "TILLED", px, py, TILE_SIZE)) {
+              ctx.fillStyle = "#8B6914";
+              ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+            }
           } else if (tile === TILE_WELL) {
-            ctx.fillStyle = "#7a7a7a";
-            ctx.fillRect(
-              px + TILE_SIZE * 0.2,
-              py + TILE_SIZE * 0.35,
-              TILE_SIZE * 0.6,
-              TILE_SIZE * 0.55,
-            );
-            ctx.fillStyle = "#4488cc";
-            ctx.fillRect(
-              px + TILE_SIZE * 0.28,
-              py + TILE_SIZE * 0.45,
-              TILE_SIZE * 0.44,
-              TILE_SIZE * 0.35,
-            );
+            if (!drawSprite(ctx, "WELL", px, py, TILE_SIZE)) {
+              ctx.fillStyle = "#7a7a7a";
+              ctx.fillRect(
+                px + TILE_SIZE * 0.2,
+                py + TILE_SIZE * 0.35,
+                TILE_SIZE * 0.6,
+                TILE_SIZE * 0.55,
+              );
+              ctx.fillStyle = "#4488cc";
+              ctx.fillRect(
+                px + TILE_SIZE * 0.28,
+                py + TILE_SIZE * 0.45,
+                TILE_SIZE * 0.44,
+                TILE_SIZE * 0.35,
+              );
+            }
+          } else if (tile === TILE_RIVER) {
+            if (!drawSprite(ctx, "WATER", px, py, TILE_SIZE)) {
+              ctx.fillStyle = "#3b7dd8";
+              ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+            }
           } else {
-            ctx.fillStyle = tile === TILE_RIVER ? "#3b7dd8" : gc;
+            ctx.fillStyle = gc;
             ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
           }
+
+          // Cerca
           if (tile === TILE_FENCE) {
-            ctx.fillStyle = "#8B5A2B";
-            ctx.fillRect(px + 2, py + TILE_SIZE * 0.3, TILE_SIZE - 4, 4);
-            ctx.fillRect(px + 2, py + TILE_SIZE * 0.6, TILE_SIZE - 4, 4);
+            if (!drawSprite(ctx, "FENCE", px, py, TILE_SIZE)) {
+              ctx.fillStyle = "#8B5A2B";
+              ctx.fillRect(px + 2, py + TILE_SIZE * 0.3, TILE_SIZE - 4, 4);
+              ctx.fillRect(px + 2, py + TILE_SIZE * 0.6, TILE_SIZE - 4, 4);
+            }
           }
+
+          // Poste de luz
           if (tile === TILE_LAMPPOST) {
-            ctx.fillStyle = "#666";
-            ctx.fillRect(
-              px + TILE_SIZE * 0.44,
-              py + TILE_SIZE * 0.2,
-              TILE_SIZE * 0.12,
-              TILE_SIZE * 0.4,
-            );
-            ctx.fillStyle = "#FFD700";
-            ctx.fillRect(
-              px + TILE_SIZE * 0.57,
-              py + TILE_SIZE * 0.04,
-              TILE_SIZE * 0.16,
-              TILE_SIZE * 0.14,
-            );
+            if (!drawSprite(ctx, "LAMPPOST", px, py, TILE_SIZE)) {
+              ctx.fillStyle = "#666";
+              ctx.fillRect(
+                px + TILE_SIZE * 0.44,
+                py + TILE_SIZE * 0.2,
+                TILE_SIZE * 0.12,
+                TILE_SIZE * 0.4,
+              );
+              ctx.fillStyle = "#FFD700";
+              ctx.fillRect(
+                px + TILE_SIZE * 0.57,
+                py + TILE_SIZE * 0.04,
+                TILE_SIZE * 0.16,
+                TILE_SIZE * 0.14,
+              );
+            }
           }
+
+          // ÁRVORE COMUM
           if (tile === TILE_TREE) {
-            ctx.fillStyle = "#5C3D1F";
-            ctx.fillRect(
-              px + TILE_SIZE * 0.35,
-              py + TILE_SIZE * 0.45,
-              TILE_SIZE * 0.3,
-              TILE_SIZE * 0.5,
-            );
-            ctx.fillStyle = "#1B5E1B";
-            ctx.beginPath();
-            ctx.arc(
-              px + TILE_SIZE * 0.5,
-              py + TILE_SIZE * 0.2,
-              TILE_SIZE * 0.35,
-              0,
-              Math.PI * 2,
-            );
-            ctx.fill();
+            const size = TILE_SIZE * TREE_SCALE;
+            const offX = (TILE_SIZE - size) / 2;
+            const offY = (TILE_SIZE - size) / 2;
+            if (!drawSprite(ctx, "TREE", px + offX, py + offY, size)) {
+              ctx.fillStyle = "#5C3D1F";
+              ctx.fillRect(
+                px + TILE_SIZE * 0.35 - (TILE_SIZE * (TREE_SCALE - 1)) / 2,
+                py + TILE_SIZE * 0.45,
+                TILE_SIZE * 0.3 * TREE_SCALE,
+                TILE_SIZE * 0.5 * TREE_SCALE,
+              );
+              ctx.fillStyle = "#1B5E1B";
+              ctx.beginPath();
+              ctx.arc(
+                px + TILE_SIZE * 0.5,
+                py + TILE_SIZE * 0.2 - (TILE_SIZE * (TREE_SCALE - 1)) / 2,
+                TILE_SIZE * 0.35 * TREE_SCALE,
+                0,
+                Math.PI * 2,
+              );
+              ctx.fill();
+            }
           }
+
+          // ARBUSTO
           if (tile === TILE_BUSH) {
-            ctx.fillStyle = "#3a7d3a";
-            ctx.beginPath();
-            ctx.arc(
-              px + TILE_SIZE * 0.5,
-              py + TILE_SIZE * 0.55,
-              TILE_SIZE * 0.3,
-              0,
-              Math.PI * 2,
-            );
-            ctx.fill();
+            const size = TILE_SIZE * BUSH_SCALE;
+            const offX = (TILE_SIZE - size) / 2;
+            const offY = (TILE_SIZE - size) / 2;
+            const bushKey = (x + y) % 2 === 0 ? "BUSH" : "BUSH2";
+            if (!drawSprite(ctx, bushKey, px + offX, py + offY, size)) {
+              ctx.fillStyle = "#3a7d3a";
+              ctx.beginPath();
+              ctx.arc(
+                px + TILE_SIZE * 0.5,
+                py + TILE_SIZE * 0.55,
+                TILE_SIZE * 0.3 * BUSH_SCALE,
+                0,
+                Math.PI * 2,
+              );
+              ctx.fill();
+            }
           }
+
+          // ÁRVORE FRUTÍFERA
           if (tile === TILE_FRUIT_TREE) {
-            ctx.fillStyle = "#5C3D1F";
-            ctx.fillRect(
-              px + TILE_SIZE * 0.35,
-              py + TILE_SIZE * 0.45,
-              TILE_SIZE * 0.3,
-              TILE_SIZE * 0.5,
-            );
-            ctx.fillStyle = "#1B5E1B";
-            ctx.beginPath();
-            ctx.arc(
-              px + TILE_SIZE * 0.5,
-              py + TILE_SIZE * 0.2,
-              TILE_SIZE * 0.35,
-              0,
-              Math.PI * 2,
-            );
-            ctx.fill();
-            ctx.fillStyle =
-              gameFruitTreeTimers[`${x},${y}`] >= 300 ? "#ff3333" : "#888";
-            ctx.beginPath();
-            ctx.arc(
-              px + TILE_SIZE * 0.6,
-              py + TILE_SIZE * 0.15,
-              TILE_SIZE * 0.12,
-              0,
-              Math.PI * 2,
-            );
-            ctx.fill();
+            const size = TILE_SIZE * FRUIT_SCALE;
+            const offX = (TILE_SIZE - size) / 2;
+            const offY = (TILE_SIZE - size) / 2;
+            if (!drawSprite(ctx, "FRUIT_TREE", px + offX, py + offY, size)) {
+              ctx.fillStyle = "#5C3D1F";
+              ctx.fillRect(
+                px + TILE_SIZE * 0.35 - (TILE_SIZE * (FRUIT_SCALE - 1)) / 2,
+                py + TILE_SIZE * 0.45,
+                TILE_SIZE * 0.3 * FRUIT_SCALE,
+                TILE_SIZE * 0.5 * FRUIT_SCALE,
+              );
+              ctx.fillStyle = "#1B5E1B";
+              ctx.beginPath();
+              ctx.arc(
+                px + TILE_SIZE * 0.5,
+                py + TILE_SIZE * 0.2 - (TILE_SIZE * (FRUIT_SCALE - 1)) / 2,
+                TILE_SIZE * 0.35 * FRUIT_SCALE,
+                0,
+                Math.PI * 2,
+              );
+              ctx.fill();
+            }
+            // Maçã
+            const hasFruit = gameFruitTreeTimers[`${x},${y}`] >= 300;
+            if (hasFruit) {
+              const appleSize = TILE_SIZE * 0.25 * FRUIT_SCALE;
+              const ax =
+                px + TILE_SIZE * 0.55 - (appleSize - TILE_SIZE * 0.25) / 2;
+              const ay =
+                py + TILE_SIZE * 0.05 - (appleSize - TILE_SIZE * 0.25) / 2;
+              if (!drawSprite(ctx, "APPLE", ax, ay, appleSize)) {
+                ctx.fillStyle = "#ff3333";
+                ctx.beginPath();
+                ctx.arc(
+                  px + TILE_SIZE * 0.6,
+                  py + TILE_SIZE * 0.15,
+                  TILE_SIZE * 0.12 * FRUIT_SCALE,
+                  0,
+                  Math.PI * 2,
+                );
+                ctx.fill();
+              }
+            }
           }
         }
+      }
+
+      // Desenhar a casa (farmHouse) usando sprite
+      const houseX = (farmHouse.x - gameCamX) * TILE_SIZE;
+      const houseY = (farmHouse.y - gameCamY) * TILE_SIZE;
+      const houseW = farmHouse.w * TILE_SIZE;
+      const houseH = farmHouse.h * TILE_SIZE;
+      if (!drawSprite(ctx, "HOUSE", houseX, houseY, houseW, houseH)) {
+        // Fallback: retângulo marrom
+        ctx.fillStyle = "#8B4513";
+        ctx.fillRect(houseX, houseY, houseW, houseH);
+        ctx.fillStyle = "#A0522D";
+        ctx.fillRect(houseX + 5, houseY + 5, houseW - 10, houseH - 10);
+        ctx.fillStyle = "#FFD700";
+        ctx.fillRect(houseX + houseW / 2 - 5, houseY - 5, 10, 10);
+      }
+
+      // Culturas
       for (let k in gameCrops) {
         const [x, y] = k.split(",").map(Number),
           px = (x - gameCamX) * TILE_SIZE,
@@ -2288,6 +2472,8 @@
           ctx.fillText("★", px + TILE_SIZE * 0.35, py + TILE_SIZE * 0.25);
         }
       }
+
+      // Construções (barn, silo, etc.)
       gameBuildings.forEach((b) => {
         const px = (b.x - gameCamX) * TILE_SIZE,
           py = (b.y - gameCamY) * TILE_SIZE;
@@ -2297,18 +2483,34 @@
           ctx.fillStyle = "lime";
           ctx.fillRect(px, py - 10, TILE_SIZE * b.progress, 5);
         } else {
-          if (b.type === "well") {
-            ctx.fillStyle = "#7a7a7a";
-            ctx.fillRect(
-              px + TILE_SIZE * 0.2,
-              py + TILE_SIZE * 0.35,
-              TILE_SIZE * 0.6,
-              TILE_SIZE * 0.55,
-            );
-          } else if (b.type === "barn") {
-            ctx.fillStyle = "#8B4513";
-            ctx.fillRect(px + 4, py + 4, TILE_SIZE - 8, TILE_SIZE - 4);
+          if (b.type === "barn") {
+            if (!drawSprite(ctx, "BARN", px, py, TILE_SIZE)) {
+              ctx.fillStyle = "#8B4513";
+              ctx.fillRect(px + 4, py + 4, TILE_SIZE - 8, TILE_SIZE - 4);
+            }
+          } else if (b.type === "silo") {
+            if (!drawSprite(ctx, "SILO", px, py, TILE_SIZE)) {
+              ctx.fillStyle = "#A9A9A9";
+              ctx.fillRect(
+                px + TILE_SIZE * 0.2,
+                py + TILE_SIZE * 0.1,
+                TILE_SIZE * 0.6,
+                TILE_SIZE * 0.8,
+              );
+            }
+          } else if (b.type === "well") {
+            drawSprite(ctx, "WELL", px, py, TILE_SIZE) ||
+              (() => {
+                ctx.fillStyle = "#7a7a7a";
+                ctx.fillRect(
+                  px + TILE_SIZE * 0.2,
+                  py + TILE_SIZE * 0.35,
+                  TILE_SIZE * 0.6,
+                  TILE_SIZE * 0.55,
+                );
+              })();
           } else {
+            // fallback
             ctx.fillStyle = "#A9A9A9";
             ctx.fillRect(
               px + TILE_SIZE * 0.2,
@@ -2319,12 +2521,27 @@
           }
         }
       });
+
+      // Animais
       gameWildAnimals.forEach((a) => {
-        const px = (a.x - gameCamX) * TILE_SIZE,
-          py = (a.y - gameCamY) * TILE_SIZE,
-          sizeScale = [0.5, 0.75, 1][a.stage];
-        ctx.font = `${TILE_SIZE * 0.5 * sizeScale}px "Press Start 2P"`;
-        ctx.fillText(a.type, px + TILE_SIZE * 0.15, py + TILE_SIZE * 0.7);
+        const px = (a.x - gameCamX) * TILE_SIZE;
+        const py = (a.y - gameCamY) * TILE_SIZE;
+        const sizeScale = [0.5, 0.75, 1][a.stage];
+        const size = TILE_SIZE * 0.5 * sizeScale;
+
+        let spriteKey = null;
+        if (a.species === "cow") spriteKey = "COW";
+        else if (a.species === "chicken") {
+          spriteKey = a.stage === 0 ? "CHICKEN_BABY" : "CHICKEN";
+        } else if (a.species === "pig") spriteKey = "PIG";
+        else if (a.species === "rabbit") spriteKey = "RABBIT";
+        else if (a.species === "duck") spriteKey = "DUCK";
+
+        if (spriteKey && !drawSprite(ctx, spriteKey, px, py, size)) {
+          ctx.font = `${size}px "Press Start 2P"`;
+          ctx.fillText(a.type, px + TILE_SIZE * 0.15, py + TILE_SIZE * 0.7);
+        }
+
         if (a.isLeashed) {
           ctx.strokeStyle = "#ff69b4";
           ctx.lineWidth = 2;
@@ -2338,6 +2555,8 @@
           ctx.lineWidth = 1;
         }
       });
+
+      // Jogadores remotos
       for (let id in remotePlayers) {
         const rp = remotePlayers[id];
         const rpx = (rp.x - gameCamX) * TILE_SIZE,
@@ -2349,11 +2568,14 @@
         ctx.font = `${TILE_SIZE * 0.2}px "Press Start 2P"`;
         ctx.fillText(rp.name || "?", rpx + TILE_SIZE * 0.1, rpy - 5);
       }
+
+      // Jogador local
       const ppx = (gamePlayer.x - gameCamX) * TILE_SIZE,
         ppy = (gamePlayer.y - gameCamY) * TILE_SIZE;
       ctx.fillStyle = "#3b5998";
       ctx.font = `${TILE_SIZE * 0.7}px "Press Start 2P"`;
       ctx.fillText("🧑‍🌾", ppx + TILE_SIZE * 0.1, ppy + TILE_SIZE * 0.8);
+
       if (!isHost && roomId && !worldReceived) {
         ctx.fillStyle = "rgba(0,0,0,0.6)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -2372,6 +2594,7 @@
         );
         ctx.textAlign = "left";
       }
+
       if (ov) {
         ctx.fillStyle = ov;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -2392,6 +2615,7 @@
     showRoomCodeInGame();
   }
 
+  // Editor de código
   const editorModal = document.getElementById("editor-modal"),
     codeEditor = document.getElementById("codeEditor");
   document
