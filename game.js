@@ -1,22 +1,36 @@
 (function () {
-  // ========== CONFIGURAÇÃO DE SPRITES ==========
+  // ============================================================
+  // 1. CONFIGURAÇÃO DE SPRITES
+  // ============================================================
   const SPRITE_CONFIG = {
+    // Vegetação
     TREE: "assets/tree.png",
     FRUIT_TREE: "assets/fruit_tree.png",
     APPLE: "assets/apple.png",
     BUSH: "assets/bush.png",
     BUSH2: "assets/bush2.png",
+    // Construções
     FENCE: "assets/fence.png",
     LAMPPOST: "assets/lamppost.png",
-    WELL: "assets/well.png", // Poço
+    WELL: "assets/well.png",
+    SILO: "assets/silo.png",
+    BARN: "assets/barn.png",
+    HOUSE: "assets/house.png",
+    // Terreno
     TILLED: "assets/till.png",
     WATER: "assets/water.png",
+    // Ferramentas
     HOE: "assets/hoe.png",
-    // ===== NOVOS SPRITES =====
-    SILO: "assets/silo.png", // Silo
-    BARN: "assets/barn.png", // Celeiro
-    HOUSE: "assets/house.png", // Casa do fazendeiro
-    LEASH: "assets/leash.png", // Corda (ícone)
+    LEASH: "assets/leash.png",
+    WATERING_CAN: "assets/watering_can.png",
+    BOOTS: "assets/boots.png",
+    // Culturas
+    CROP_WHEAT: "assets/wheat.png",
+    CROP_CORN: "assets/corn.png",
+    CROP_CARROT: "assets/carrot.png",
+    CROP_TOMATO: "assets/tomato.png",
+    // Jogador
+    PLAYER: "assets/player.png",
     // Animais
     COW: "assets/cow.png",
     CHICKEN: "assets/chicken.png",
@@ -24,6 +38,7 @@
     PIG: "assets/pig.png",
     RABBIT: "assets/rabbit.png",
     DUCK: "assets/duck.png",
+    // Ativar sprites (false = usa desenhos geométricos)
     USE_SPRITES: true,
   };
 
@@ -34,6 +49,9 @@
   const spriteImages = {};
   let spritesLoaded = false;
 
+  // ============================================================
+  // 2. FUNÇÕES DE CARREGAMENTO E DESENHO DE SPRITES
+  // ============================================================
   function loadSprites() {
     const promises = [];
     for (const [key, url] of Object.entries(SPRITE_CONFIG)) {
@@ -57,10 +75,11 @@
     return Promise.all(promises).then(() => {
       spritesLoaded = true;
       console.log("✅ Sprites carregados!");
+      updateHotbarSprites();
     });
   }
 
-  function drawSprite(ctx, key, x, y, size) {
+  function drawSprite(ctx, key, x, y, size, center = false) {
     const img = spriteImages[key];
     if (
       SPRITE_CONFIG.USE_SPRITES &&
@@ -68,13 +87,70 @@
       img.complete &&
       img.naturalWidth > 0
     ) {
-      ctx.drawImage(img, x, y, size, size);
+      if (center) {
+        const imgSize = Math.min(img.width, img.height);
+        const scale = size / imgSize;
+        const drawW = img.width * scale;
+        const drawH = img.height * scale;
+        const offX = (size - drawW) / 2;
+        const offY = (size - drawH) / 2;
+        ctx.drawImage(img, x + offX, y + offY, drawW, drawH);
+      } else {
+        ctx.drawImage(img, x, y, size, size);
+      }
       return true;
     }
     return false;
   }
 
-  // ========== VARIÁVEIS GLOBAIS ==========
+  // ============================================================
+  // 3. HOTBAR COM SPRITES
+  // ============================================================
+  function updateHotbarSprites() {
+    const spriteMap = {
+      '-1': null,
+      '0': 'CROP_WHEAT',
+      '1': 'CROP_CORN',
+      '2': 'CROP_CARROT',
+      '3': 'CROP_TOMATO',
+      '5': 'LEASH',
+      '6': 'WATERING_CAN',
+      '7': 'HOE',
+      '8': 'BOOTS',
+    };
+
+    document.querySelectorAll('.hotbar-slot').forEach((slot) => {
+      const slotIndex = slot.getAttribute('data-slot');
+      const spriteKey = spriteMap[slotIndex];
+      const iconSpan = slot.querySelector('span:not(.key-hint):not(.crop-name)');
+      if (!iconSpan) return;
+
+      if (spriteKey && SPRITE_CONFIG[spriteKey]) {
+        const imgUrl = SPRITE_CONFIG[spriteKey];
+        const img = spriteImages[spriteKey];
+        if (img && img.complete && img.naturalWidth > 0) {
+          iconSpan.innerHTML = `<img src="${imgUrl}" style="width:28px;height:28px;image-rendering:pixelated;vertical-align:middle;">`;
+        } else {
+          // Fallback emoji
+          if (slotIndex === '-1') iconSpan.textContent = '👐';
+          else if (slotIndex === '0') iconSpan.textContent = '🌾';
+          else if (slotIndex === '1') iconSpan.textContent = '🌽';
+          else if (slotIndex === '2') iconSpan.textContent = '🥕';
+          else if (slotIndex === '3') iconSpan.textContent = '🍅';
+          else if (slotIndex === '5') iconSpan.textContent = '🧶';
+          else if (slotIndex === '6') iconSpan.textContent = '🚿';
+          else if (slotIndex === '7') iconSpan.textContent = '🔧';
+          else if (slotIndex === '8') iconSpan.textContent = '👢';
+        }
+      } else {
+        iconSpan.textContent = '👐';
+      }
+    });
+  }
+
+  // ============================================================
+  // 4. VARIÁVEIS GLOBAIS DO JOGO
+  // ============================================================
   let playerName = "";
   let gameLoopId = null;
   let peer = null;
@@ -91,6 +167,7 @@
   let guestReady = false;
   let reconnectTimeout = null;
 
+  // DOM
   const loginScreen = document.getElementById("login-screen");
   const lobbyScreen = document.getElementById("lobby-screen");
   const roomDisplay = document.getElementById("room-display");
@@ -108,7 +185,9 @@
   const notification = document.getElementById("notification");
   const savedName = localStorage.getItem("codegarden_username");
 
-  // ========== LOBBY DE PRONTIDÃO ==========
+  // ============================================================
+  // 5. LOBBY DE PRONTIDÃO (multiplayer)
+  // ============================================================
   let readyLobby = null;
 
   function createReadyLobby() {
@@ -203,6 +282,9 @@
     }
   }
 
+  // ============================================================
+  // 6. FUNÇÕES AUXILIARES (UI, notificações, login, logout)
+  // ============================================================
   function copyRoomCode() {
     if (!roomId) return;
     navigator.clipboard
@@ -314,6 +396,9 @@
     );
   }
 
+  // ============================================================
+  // 7. MULTIPLAYER (PeerJS)
+  // ============================================================
   function initMultiplayer() {
     const roomInput = document.getElementById("room-id-input");
     const lobbyInfo = document.getElementById("lobby-info");
@@ -714,7 +799,9 @@
     } catch (e) {}
   }
 
-  // ========== LOGIN ==========
+  // ============================================================
+  // 8. LOGIN E AMIGOS
+  // ============================================================
   loginBtn.addEventListener("click", () => {
     const email = loginEmail.value.trim(),
       password = loginPassword.value.trim();
@@ -762,7 +849,9 @@
   }
   initMultiplayer();
 
-  // ========== AMIGOS ==========
+  // ============================================================
+  // 9. SISTEMA DE AMIGOS
+  // ============================================================
   function getFriends() {
     const d = localStorage.getItem("codegarden_friends_" + playerName);
     return d ? JSON.parse(d) : [];
@@ -831,13 +920,16 @@
     showNotification("👥 " + n + " adicionado!");
   });
 
-  // ========== INICIALIZAÇÃO DO MUNDO DO JOGO ==========
+  // ============================================================
+  // 10. JOGO (canvas, constantes, estado)
+  // ============================================================
   const canvas = document.getElementById("gameCanvas");
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
 
   loadSprites().then(() => {
     console.log("Sprites prontos para uso.");
+    updateHotbarSprites();
   });
 
   const MAP_W = 50,
@@ -861,6 +953,7 @@
     GROWTH_STAGE2 = 45 * MINUTE_MS;
   const MAX_WATER = 10;
   let TILE_SIZE = 48;
+
   const SPECIES_SPEEDS = {
     cow: 0.008,
     pig: 0.015,
@@ -886,6 +979,7 @@
     sheep: "ovelha",
   };
   const farmHouse = { x: 22, y: 16, w: 3, h: 2 };
+
   const CROP_NAMES = {
     wheat: "Trigo",
     corn: "Milho",
@@ -918,21 +1012,23 @@
   let gameCamX = gamePlayer.x - canvas.width / TILE_SIZE / 2,
     gameCamY = gamePlayer.y - canvas.height / TILE_SIZE / 2;
   let gameSelectedCrop = -1,
-    gameSelectedTool = null,
-    gamePlayerXP = 0,
+    gameSelectedTool = null;
+  let gamePlayerXP = 0,
     gamePlayerLevel = 1;
   let gameWildAnimals = [],
-    gameBuildings = [],
-    gamePendingBuilding = null,
+    gameBuildings = [];
+  let gamePendingBuilding = null,
     gamePendingAnimal = null;
   let gameFloatingHearts = [],
-    gameTime = 0,
-    gameUnlockedItems = ["barn", "silo", "fence"];
+    gameTime = 0;
+  let gameUnlockedItems = ["barn", "silo", "fence"];
   let gameTimeOffset = 0,
-    gamePlayerCoins = 0,
-    gamePlayerWater = MAX_WATER,
+    gamePlayerCoins = 0;
+  let gamePlayerWater = MAX_WATER,
     gameHasWateringCan = false,
     gameHasBoots = false;
+  let buildPreviewX = -1,
+    buildPreviewY = -1;
 
   window.CROPS = {
     WHEAT: "wheat",
@@ -984,6 +1080,9 @@
     };
   }
 
+  // ============================================================
+  // 11. INICIALIZAÇÃO DO MUNDO
+  // ============================================================
   function initGameWorld(generateMap) {
     if (gameRunning) return;
     gameRunning = true;
@@ -1089,6 +1188,37 @@
       });
     }
 
+    updateHotbarSprites();
+
+    // ============================================================
+    // 11a. PRÉVIA DE CONSTRUÇÃO (mouse move)
+    // ============================================================
+    canvas.addEventListener("mousemove", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const sx = canvas.width / rect.width;
+      const sy = canvas.height / rect.height;
+      const cx = ((e.clientX - rect.left) * sx) / TILE_SIZE + gameCamX;
+      const cy = ((e.clientY - rect.top) * sy) / TILE_SIZE + gameCamY;
+      const tx = Math.floor(cx);
+      const ty = Math.floor(cy);
+
+      if (gamePendingBuilding && tx >= 0 && tx < MAP_W && ty >= 0 && ty < MAP_H) {
+        buildPreviewX = tx;
+        buildPreviewY = ty;
+      } else {
+        buildPreviewX = -1;
+        buildPreviewY = -1;
+      }
+    });
+
+    canvas.addEventListener("mouseleave", () => {
+      buildPreviewX = -1;
+      buildPreviewY = -1;
+    });
+
+    // ============================================================
+    // 11b. FUNÇÕES AUXILIARES
+    // ============================================================
     function isWalkable(tx, ty) {
       if (tx < 0 || tx >= MAP_W || ty < 0 || ty >= MAP_H) return false;
       const tile = gameMap[ty][tx];
@@ -1104,6 +1234,7 @@
       if (inHouse) return true;
       return tile !== TILE_RIVER;
     }
+
     function canAnimalMoveTo(animal, nx, ny) {
       const tx = Math.floor(nx),
         ty = Math.floor(ny);
@@ -1113,6 +1244,7 @@
       if (tile === TILE_RIVER && animal.species !== "duck") return false;
       return true;
     }
+
     function getAnimalStage(animal) {
       const e = Date.now() - animal.growthStart;
       if (e > GROWTH_STAGE2) return 2;
@@ -1153,6 +1285,7 @@
       }
       return [];
     }
+
     function startMoveAlongPath(path, actionOnEnd) {
       if (gamePlayer.moving || path.length === 0) return;
       gamePlayer.movePath = path;
@@ -1160,6 +1293,7 @@
       gamePlayer.actionOnArrival = actionOnEnd;
       advanceToNextTile();
     }
+
     function advanceToNextTile() {
       if (gamePlayer.movePath.length === 0) {
         gamePlayer.moving = false;
@@ -1184,41 +1318,6 @@
       gamePlayer.tileY = next.tileY;
     }
 
-    canvas.addEventListener("mousedown", (e) => {
-      const rect = canvas.getBoundingClientRect(),
-        sx = canvas.width / rect.width,
-        sy = canvas.height / rect.height,
-        cx = ((e.clientX - rect.left) * sx) / TILE_SIZE + gameCamX,
-        cy = ((e.clientY - rect.top) * sy) / TILE_SIZE + gameCamY,
-        tx = Math.floor(cx),
-        ty = Math.floor(cy);
-      if (gamePendingAnimal) {
-        if (
-          isWalkable(tx, ty) &&
-          (gameMap[ty][tx] === TILE_GRASS || gameMap[ty][tx] === TILE_TILLED)
-        ) {
-          gameWildAnimals.push(
-            createGameAnimal(gamePendingAnimal, tx + 0.5, ty + 0.5),
-          );
-          showNotification(`🐾 ${SPECIES_NAMES[gamePendingAnimal]} solto!`);
-        } else showNotification("❌ Local inválido.");
-        gamePendingAnimal = null;
-        return;
-      }
-      if (gamePlayer.moving) return;
-      if (!isWalkable(tx, ty)) {
-        showNotification("🚧 Bloqueado!");
-        return;
-      }
-      if (tx === gamePlayer.tileX && ty === gamePlayer.tileY) {
-        executeAction(tx, ty);
-        return;
-      }
-      const path = buildPathTo(tx, ty);
-      if (path.length === 0) return;
-      startMoveAlongPath(path, true);
-    });
-
     function movePlayerRelative(dRow, dCol) {
       if (gamePlayer.moving) return Promise.resolve();
       const tx = gamePlayer.tileX + dCol,
@@ -1232,6 +1331,7 @@
       startMoveAlongPath(path, true);
       return waitForArrival();
     }
+
     function waitForArrival() {
       return new Promise((res) => {
         const check = () => {
@@ -1257,6 +1357,7 @@
       });
       return n;
     }
+
     function getNearestAnimal() {
       let n = null,
         d = 1.5;
@@ -1269,6 +1370,7 @@
       });
       return n;
     }
+
     function spawnHearts(wx, wy, count) {
       for (let i = 0; i < count; i++)
         gameFloatingHearts.push({
@@ -1280,6 +1382,9 @@
         });
     }
 
+    // ============================================================
+    // 11c. AÇÕES DO JOGADOR
+    // ============================================================
     function executeAction(x, y) {
       const tile = gameMap[y][x],
         key = `${x},${y}`;
@@ -1345,6 +1450,9 @@
         `⭐ Nv.${gamePlayerLevel} | XP: ${gamePlayerXP}/${gamePlayerLevel * XP_PER_LEVEL} 💰${gamePlayerCoins}`;
     }
 
+    // ============================================================
+    // 11d. DICAS CONTEXTUAIS (hint)
+    // ============================================================
     function checkNearbyInteraction() {
       const px = gamePlayer.x,
         py = gamePlayer.y,
@@ -1456,6 +1564,7 @@
       hintBubble.innerHTML = "";
       hintBubble.style.display = "none";
     }
+
     function showLevelUpModal() {
       const m = document.getElementById("levelup-modal");
       document.getElementById("levelup-level").textContent =
@@ -1476,6 +1585,9 @@
       }, 5000);
     }
 
+    // ============================================================
+    // 11e. UI (hotbar, loja, água, etc.)
+    // ============================================================
     function updateGameWaterBar() {
       const c = document.getElementById("water-bar-container");
       if (gameHasWateringCan) {
@@ -1486,6 +1598,7 @@
           gamePlayerWater + "/" + MAX_WATER;
       } else c.style.display = "none";
     }
+
     function updateGameShopUI() {
       const li = document.getElementById("shop-lamppost");
       if (gamePlayerLevel >= 2) {
@@ -1511,14 +1624,17 @@
         updateGameWaterBar();
         document.getElementById("watering-can-slot").classList.remove("locked");
         showNotification("🚿 Regador desbloqueado!");
+        updateHotbarSprites();
       }
       if (gamePlayerLevel >= 4 && !gameHasBoots) {
         gameHasBoots = true;
         document.getElementById("boots-slot").classList.remove("locked");
         showNotification("👢 Botas desbloqueadas!");
+        updateHotbarSprites();
       }
       bindShopButtons();
     }
+
     function updateGameHotbar() {
       document.querySelectorAll(".hotbar-slot").forEach((s) => {
         const sv = s.getAttribute("data-slot");
@@ -1550,6 +1666,9 @@
                   : `🌱 ${Object.values(CROP_EMOJIS)[gameSelectedCrop]} ${Object.values(CROP_NAMES)[gameSelectedCrop]}`;
     }
 
+    // ============================================================
+    // 11f. LOJA
+    // ============================================================
     function bindShopButtons() {
       document
         .querySelectorAll("#shop-modal .btn[data-item]")
@@ -1572,7 +1691,7 @@
                 return;
               }
               gamePendingBuilding = { type: item };
-              showNotification(`🏗️ ${item} comprado! farm.buildings.place()`);
+              showNotification(`🏗️ ${item} comprado! Clique no chão.`);
             } else if (item === "boots") {
               if (gamePlayerLevel < 4) {
                 showNotification("🔒 Nv.4");
@@ -1581,13 +1700,14 @@
               gameHasBoots = true;
               document.getElementById("boots-slot").classList.remove("locked");
               showNotification("👢 Botas equipadas!");
+              updateHotbarSprites();
             } else if (
               ["cow", "pig", "duck", "rabbit", "chicken", "sheep"].includes(
                 item,
               )
             ) {
               gamePendingAnimal = item;
-              showNotification(`🐾 ${SPECIES_NAMES[item]} comprado!`);
+              showNotification(`🐾 ${SPECIES_NAMES[item]} comprado! Clique no chão.`);
             }
             document.getElementById("shop-modal").style.display = "none";
           });
@@ -1617,6 +1737,9 @@
     });
     bindShopButtons();
 
+    // ============================================================
+    // 11g. CLIQUE NA HOTBAR
+    // ============================================================
     document.querySelectorAll(".hotbar-slot").forEach((s) => {
       s.addEventListener("click", () => {
         const sv = s.getAttribute("data-slot");
@@ -1649,6 +1772,97 @@
       });
     });
 
+    // ============================================================
+    // 11h. CLIQUE NO CANVAS
+    // ============================================================
+    canvas.addEventListener("mousedown", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const sx = canvas.width / rect.width;
+      const sy = canvas.height / rect.height;
+      const cx = ((e.clientX - rect.left) * sx) / TILE_SIZE + gameCamX;
+      const cy = ((e.clientY - rect.top) * sy) / TILE_SIZE + gameCamY;
+      const tx = Math.floor(cx);
+      const ty = Math.floor(cy);
+
+      // Colocar animal
+      if (gamePendingAnimal) {
+        if (
+          tx >= 0 && tx < MAP_W &&
+          ty >= 0 && ty < MAP_H &&
+          isWalkable(tx, ty) &&
+          (gameMap[ty][tx] === TILE_GRASS || gameMap[ty][tx] === TILE_TILLED)
+        ) {
+          gameWildAnimals.push(
+            createGameAnimal(gamePendingAnimal, tx + 0.5, ty + 0.5),
+          );
+          showNotification(`🐾 ${SPECIES_NAMES[gamePendingAnimal]} solto!`);
+          gamePendingAnimal = null;
+        } else {
+          showNotification("❌ Local inválido.");
+        }
+        return;
+      }
+
+      // Construir
+      if (gamePendingBuilding) {
+        if (
+          tx >= 0 && tx < MAP_W &&
+          ty >= 0 && ty < MAP_H &&
+          isWalkable(tx, ty) &&
+          (gameMap[ty][tx] === TILE_GRASS || gameMap[ty][tx] === TILE_TILLED)
+        ) {
+          const type = gamePendingBuilding.type;
+          if (type === "fence") {
+            gameMap[ty][tx] = TILE_FENCE;
+          } else if (type === "lamppost") {
+            gameMap[ty][tx] = TILE_LAMPPOST;
+          } else if (type === "well") {
+            gameMap[ty][tx] = TILE_WELL;
+          } else {
+            // barn, silo, etc.
+            gameBuildings.push({
+              x: tx,
+              y: ty,
+              type: type,
+              startTime: Date.now(),
+              progress: 0,
+              isReady: false,
+            });
+          }
+          showNotification(`✅ ${type} colocado!`);
+          broadcastAction({
+            action: "placeBuilding",
+            tileX: tx,
+            tileY: ty,
+            buildingType: type,
+          });
+          gamePendingBuilding = null;
+          buildPreviewX = -1;
+          buildPreviewY = -1;
+        } else {
+          showNotification("❌ Local inválido.");
+        }
+        return;
+      }
+
+      // Movimento / ação
+      if (gamePlayer.moving) return;
+      if (!isWalkable(tx, ty)) {
+        showNotification("🚧 Bloqueado!");
+        return;
+      }
+      if (tx === gamePlayer.tileX && ty === gamePlayer.tileY) {
+        executeAction(tx, ty);
+        return;
+      }
+      const path = buildPathTo(tx, ty);
+      if (path.length === 0) return;
+      startMoveAlongPath(path, true);
+    });
+
+    // ============================================================
+    // 11i. API farm
+    // ============================================================
     window.farm = {
       soil: {
         till: () => {
@@ -1837,36 +2051,7 @@
             showNotification("❌ Compre algo.");
             return false;
           }
-          const tx = gamePlayer.tileX,
-            ty = gamePlayer.tileY;
-          if (
-            !isWalkable(tx, ty) ||
-            (gameMap[ty][tx] !== TILE_GRASS && gameMap[ty][tx] !== TILE_TILLED)
-          ) {
-            showNotification("❌ Local inválido.");
-            return false;
-          }
-          const type = gamePendingBuilding.type;
-          if (type === "fence") gameMap[ty][tx] = TILE_FENCE;
-          else if (type === "lamppost") gameMap[ty][tx] = TILE_LAMPPOST;
-          else if (type === "well") gameMap[ty][tx] = TILE_WELL;
-          else
-            gameBuildings.push({
-              x: tx,
-              y: ty,
-              type,
-              startTime: Date.now(),
-              progress: 0,
-              isReady: false,
-            });
-          showNotification(`✅ ${type} colocado!`);
-          broadcastAction({
-            action: "placeBuilding",
-            tileX: tx,
-            tileY: ty,
-            buildingType: type,
-          });
-          gamePendingBuilding = null;
+          showNotification("Clique no chão para colocar.");
           return true;
         },
         use: () => {
@@ -2006,6 +2191,9 @@
     window.setNoite = () => window.farm.weather.setNight();
     window.setAutoClima = () => window.farm.weather.setAuto();
 
+    // ============================================================
+    // 11j. CLIMA E TEMPO
+    // ============================================================
     function getTimeToPeriod(t) {
       const e = (Date.now() + gameTimeOffset) % CYCLE_TOTAL;
       if (t === "DIA") return gameTimeOffset - e;
@@ -2013,6 +2201,7 @@
       if (t === "NOITE") return gameTimeOffset - e + 40 * MINUTE_MS;
       return gameTimeOffset;
     }
+
     function getCurrentWeather() {
       const e =
         ((Date.now() % CYCLE_TOTAL) + gameTimeOffset + CYCLE_TOTAL) %
@@ -2021,6 +2210,7 @@
       if (e < 40 * MINUTE_MS) return "TARDE";
       return "NOITE";
     }
+
     function skipToNextPeriod() {
       const e =
         ((Date.now() % CYCLE_TOTAL) + gameTimeOffset + CYCLE_TOTAL) %
@@ -2031,6 +2221,9 @@
       showNotification("💤 Descansou.");
     }
 
+    // ============================================================
+    // 11k. TECLADO
+    // ============================================================
     commandInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         const cmd = commandInput.value.trim();
@@ -2119,6 +2312,9 @@
       }
     });
 
+    // ============================================================
+    // 11l. UPDATE
+    // ============================================================
     function update() {
       gameTime++;
       if (gamePlayer.moving) {
@@ -2248,6 +2444,9 @@
       if (Math.floor(gameTime) % 10 === 0) broadcastPosition();
     }
 
+    // ============================================================
+    // 11m. DRAW
+    // ============================================================
     function draw() {
       const weather = getCurrentWeather();
       let gc, sc, ov;
@@ -2271,7 +2470,6 @@
         ex = Math.ceil(gameCamX + canvas.width / TILE_SIZE) + 1,
         ey = Math.ceil(gameCamY + canvas.height / TILE_SIZE) + 1;
 
-      // Primeiro passo: desenhar solo e tiles
       for (let y = sy; y < ey; y++) {
         for (let x = sx; x < ex; x++) {
           if (x < 0 || x >= MAP_W || y < 0 || y >= MAP_H) continue;
@@ -2279,7 +2477,6 @@
             py = (y - gameCamY) * TILE_SIZE,
             tile = gameMap[y][x];
 
-          // Solo
           if (tile === TILE_TILLED) {
             if (!drawSprite(ctx, "TILLED", px, py, TILE_SIZE)) {
               ctx.fillStyle = "#8B6914";
@@ -2303,7 +2500,7 @@
               );
             }
           } else if (tile === TILE_RIVER) {
-            if (!drawSprite(ctx, "WATER", px, py, TILE_SIZE)) {
+            if (!drawSprite(ctx, "WATER", px, py, TILE_SIZE, true)) {
               ctx.fillStyle = "#3b7dd8";
               ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
             }
@@ -2312,7 +2509,6 @@
             ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
           }
 
-          // Cerca
           if (tile === TILE_FENCE) {
             if (!drawSprite(ctx, "FENCE", px, py, TILE_SIZE)) {
               ctx.fillStyle = "#8B5A2B";
@@ -2321,7 +2517,6 @@
             }
           }
 
-          // Poste de luz
           if (tile === TILE_LAMPPOST) {
             if (!drawSprite(ctx, "LAMPPOST", px, py, TILE_SIZE)) {
               ctx.fillStyle = "#666";
@@ -2341,7 +2536,6 @@
             }
           }
 
-          // ÁRVORE COMUM
           if (tile === TILE_TREE) {
             const size = TILE_SIZE * TREE_SCALE;
             const offX = (TILE_SIZE - size) / 2;
@@ -2367,7 +2561,6 @@
             }
           }
 
-          // ARBUSTO
           if (tile === TILE_BUSH) {
             const size = TILE_SIZE * BUSH_SCALE;
             const offX = (TILE_SIZE - size) / 2;
@@ -2387,7 +2580,6 @@
             }
           }
 
-          // ÁRVORE FRUTÍFERA
           if (tile === TILE_FRUIT_TREE) {
             const size = TILE_SIZE * FRUIT_SCALE;
             const offX = (TILE_SIZE - size) / 2;
@@ -2411,24 +2603,15 @@
               );
               ctx.fill();
             }
-            // Maçã
             const hasFruit = gameFruitTreeTimers[`${x},${y}`] >= 300;
             if (hasFruit) {
-              const appleSize = TILE_SIZE * 0.25 * FRUIT_SCALE;
-              const ax =
-                px + TILE_SIZE * 0.55 - (appleSize - TILE_SIZE * 0.25) / 2;
-              const ay =
-                py + TILE_SIZE * 0.05 - (appleSize - TILE_SIZE * 0.25) / 2;
+              const appleSize = TILE_SIZE * 0.28;
+              const ax = px + (TILE_SIZE - appleSize) / 2;
+              const ay = py + TILE_SIZE * 0.1;
               if (!drawSprite(ctx, "APPLE", ax, ay, appleSize)) {
                 ctx.fillStyle = "#ff3333";
                 ctx.beginPath();
-                ctx.arc(
-                  px + TILE_SIZE * 0.6,
-                  py + TILE_SIZE * 0.15,
-                  TILE_SIZE * 0.12 * FRUIT_SCALE,
-                  0,
-                  Math.PI * 2,
-                );
+                ctx.arc(px + TILE_SIZE * 0.5, py + TILE_SIZE * 0.15, appleSize * 0.4, 0, Math.PI * 2);
                 ctx.fill();
               }
             }
@@ -2436,13 +2619,12 @@
         }
       }
 
-      // Desenhar a casa (farmHouse) usando sprite
+      // Casa
       const houseX = (farmHouse.x - gameCamX) * TILE_SIZE;
       const houseY = (farmHouse.y - gameCamY) * TILE_SIZE;
       const houseW = farmHouse.w * TILE_SIZE;
       const houseH = farmHouse.h * TILE_SIZE;
       if (!drawSprite(ctx, "HOUSE", houseX, houseY, houseW, houseH)) {
-        // Fallback: retângulo marrom
         ctx.fillStyle = "#8B4513";
         ctx.fillRect(houseX, houseY, houseW, houseH);
         ctx.fillStyle = "#A0522D";
@@ -2453,27 +2635,48 @@
 
       // Culturas
       for (let k in gameCrops) {
-        const [x, y] = k.split(",").map(Number),
-          px = (x - gameCamX) * TILE_SIZE,
-          py = (y - gameCamY) * TILE_SIZE,
-          c = gameCrops[k],
-          prog = Math.min(c.timer / c.growTime, 1),
-          stage = Math.floor(prog * 3);
-        ctx.fillStyle = ["#90EE90", "#ADFF2F", "#FFD700", "#FF8C00"][stage];
-        ctx.fillRect(
-          px + TILE_SIZE * 0.3,
-          py + TILE_SIZE * 0.4,
-          TILE_SIZE * 0.4,
-          TILE_SIZE * 0.5,
-        );
-        if (c.ready) {
-          ctx.fillStyle = "#fff";
-          ctx.font = `${TILE_SIZE * 0.3}px "Press Start 2P"`;
-          ctx.fillText("★", px + TILE_SIZE * 0.35, py + TILE_SIZE * 0.25);
+        const [x, y] = k.split(",").map(Number);
+        const px = (x - gameCamX) * TILE_SIZE;
+        const py = (y - gameCamY) * TILE_SIZE;
+        const c = gameCrops[k];
+        const prog = Math.min(c.timer / c.growTime, 1);
+
+        let cropKey = null;
+        const type = Object.keys(CROP_NAMES)[c.type];
+        if (type === 'wheat') cropKey = 'CROP_WHEAT';
+        else if (type === 'corn') cropKey = 'CROP_CORN';
+        else if (type === 'carrot') cropKey = 'CROP_CARROT';
+        else if (type === 'tomato') cropKey = 'CROP_TOMATO';
+
+        const size = TILE_SIZE * 0.7;
+        const offX = (TILE_SIZE - size) / 2;
+        const offY = (TILE_SIZE - size) / 2 + TILE_SIZE * 0.05;
+
+        if (cropKey && drawSprite(ctx, cropKey, px + offX, py + offY, size)) {
+          if (!c.ready && prog > 0.2) {
+            ctx.fillStyle = "rgba(255,255,255,0.25)";
+            ctx.beginPath();
+            ctx.arc(px + TILE_SIZE * 0.5, py + TILE_SIZE * 0.9, TILE_SIZE * 0.12, 0, Math.PI * 2 * prog);
+            ctx.fill();
+          }
+          if (c.ready) {
+            ctx.fillStyle = "#fff";
+            ctx.font = `${TILE_SIZE * 0.3}px "Press Start 2P"`;
+            ctx.fillText("★", px + TILE_SIZE * 0.35, py + TILE_SIZE * 0.2);
+          }
+        } else {
+          const stage = Math.floor(prog * 3);
+          ctx.fillStyle = ["#90EE90", "#ADFF2F", "#FFD700", "#FF8C00"][stage];
+          ctx.fillRect(px + TILE_SIZE * 0.3, py + TILE_SIZE * 0.4, TILE_SIZE * 0.4, TILE_SIZE * 0.5);
+          if (c.ready) {
+            ctx.fillStyle = "#fff";
+            ctx.font = `${TILE_SIZE * 0.3}px "Press Start 2P"`;
+            ctx.fillText("★", px + TILE_SIZE * 0.35, py + TILE_SIZE * 0.25);
+          }
         }
       }
 
-      // Construções (barn, silo, etc.)
+      // Construções
       gameBuildings.forEach((b) => {
         const px = (b.x - gameCamX) * TILE_SIZE,
           py = (b.y - gameCamY) * TILE_SIZE;
@@ -2491,36 +2694,30 @@
           } else if (b.type === "silo") {
             if (!drawSprite(ctx, "SILO", px, py, TILE_SIZE)) {
               ctx.fillStyle = "#A9A9A9";
-              ctx.fillRect(
-                px + TILE_SIZE * 0.2,
-                py + TILE_SIZE * 0.1,
-                TILE_SIZE * 0.6,
-                TILE_SIZE * 0.8,
-              );
+              ctx.fillRect(px + TILE_SIZE * 0.2, py + TILE_SIZE * 0.1, TILE_SIZE * 0.6, TILE_SIZE * 0.8);
             }
           } else if (b.type === "well") {
-            drawSprite(ctx, "WELL", px, py, TILE_SIZE) ||
-              (() => {
-                ctx.fillStyle = "#7a7a7a";
-                ctx.fillRect(
-                  px + TILE_SIZE * 0.2,
-                  py + TILE_SIZE * 0.35,
-                  TILE_SIZE * 0.6,
-                  TILE_SIZE * 0.55,
-                );
-              })();
+            drawSprite(ctx, "WELL", px, py, TILE_SIZE) || (() => {
+              ctx.fillStyle = "#7a7a7a";
+              ctx.fillRect(px + TILE_SIZE * 0.2, py + TILE_SIZE * 0.35, TILE_SIZE * 0.6, TILE_SIZE * 0.55);
+            })();
           } else {
-            // fallback
             ctx.fillStyle = "#A9A9A9";
-            ctx.fillRect(
-              px + TILE_SIZE * 0.2,
-              py + TILE_SIZE * 0.1,
-              TILE_SIZE * 0.6,
-              TILE_SIZE * 0.8,
-            );
+            ctx.fillRect(px + TILE_SIZE * 0.2, py + TILE_SIZE * 0.1, TILE_SIZE * 0.6, TILE_SIZE * 0.8);
           }
         }
       });
+
+      // PRÉVIA DE CONSTRUÇÃO (agora visível)
+      if (gamePendingBuilding && buildPreviewX >= 0 && buildPreviewY >= 0) {
+        const px = (buildPreviewX - gameCamX) * TILE_SIZE;
+        const py = (buildPreviewY - gameCamY) * TILE_SIZE;
+        ctx.fillStyle = "rgba(255,255,255,0.3)";
+        ctx.strokeStyle = "#7cfc00";
+        ctx.lineWidth = 3;
+        ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+        ctx.strokeRect(px, py, TILE_SIZE, TILE_SIZE);
+      }
 
       // Animais
       gameWildAnimals.forEach((a) => {
@@ -2530,12 +2727,12 @@
         const size = TILE_SIZE * 0.5 * sizeScale;
 
         let spriteKey = null;
-        if (a.species === "cow") spriteKey = "COW";
-        else if (a.species === "chicken") {
-          spriteKey = a.stage === 0 ? "CHICKEN_BABY" : "CHICKEN";
-        } else if (a.species === "pig") spriteKey = "PIG";
-        else if (a.species === "rabbit") spriteKey = "RABBIT";
-        else if (a.species === "duck") spriteKey = "DUCK";
+        if (a.species === 'cow') spriteKey = 'COW';
+        else if (a.species === 'chicken') {
+          spriteKey = a.stage === 0 ? 'CHICKEN_BABY' : 'CHICKEN';
+        } else if (a.species === 'pig') spriteKey = 'PIG';
+        else if (a.species === 'rabbit') spriteKey = 'RABBIT';
+        else if (a.species === 'duck') spriteKey = 'DUCK';
 
         if (spriteKey && !drawSprite(ctx, spriteKey, px, py, size)) {
           ctx.font = `${size}px "Press Start 2P"`;
@@ -2572,9 +2769,14 @@
       // Jogador local
       const ppx = (gamePlayer.x - gameCamX) * TILE_SIZE,
         ppy = (gamePlayer.y - gameCamY) * TILE_SIZE;
-      ctx.fillStyle = "#3b5998";
-      ctx.font = `${TILE_SIZE * 0.7}px "Press Start 2P"`;
-      ctx.fillText("🧑‍🌾", ppx + TILE_SIZE * 0.1, ppy + TILE_SIZE * 0.8);
+      const playerSize = TILE_SIZE * 0.7;
+      const playerOffX = (TILE_SIZE - playerSize) / 2;
+      const playerOffY = (TILE_SIZE - playerSize) / 2;
+      if (!drawSprite(ctx, "PLAYER", ppx + playerOffX, ppy + playerOffY, playerSize)) {
+        ctx.fillStyle = "#3b5998";
+        ctx.font = `${TILE_SIZE * 0.7}px "Press Start 2P"`;
+        ctx.fillText("🧑‍🌾", ppx + TILE_SIZE * 0.1, ppy + TILE_SIZE * 0.8);
+      }
 
       if (!isHost && roomId && !worldReceived) {
         ctx.fillStyle = "rgba(0,0,0,0.6)";
@@ -2582,16 +2784,8 @@
         ctx.fillStyle = "#ffd700";
         ctx.font = '16px "Press Start 2P"';
         ctx.textAlign = "center";
-        ctx.fillText(
-          "🟡 Aguardando o host",
-          canvas.width / 2,
-          canvas.height / 2 - 20,
-        );
-        ctx.fillText(
-          "iniciar o jogo...",
-          canvas.width / 2,
-          canvas.height / 2 + 20,
-        );
+        ctx.fillText("🟡 Aguardando o host", canvas.width / 2, canvas.height / 2 - 20);
+        ctx.fillText("iniciar o jogo...", canvas.width / 2, canvas.height / 2 + 20);
         ctx.textAlign = "left";
       }
 
@@ -2601,6 +2795,9 @@
       }
     }
 
+    // ============================================================
+    // 11n. LOOP PRINCIPAL
+    // ============================================================
     function gameLoop() {
       if (!gameRunning) return;
       update();
@@ -2615,7 +2812,9 @@
     showRoomCodeInGame();
   }
 
-  // Editor de código
+  // ============================================================
+  // 12. EDITOR DE CÓDIGO
+  // ============================================================
   const editorModal = document.getElementById("editor-modal"),
     codeEditor = document.getElementById("codeEditor");
   document
